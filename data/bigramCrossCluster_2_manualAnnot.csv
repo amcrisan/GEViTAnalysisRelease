@@ -1,0 +1,405 @@
+bigram,n,freq,Annotate,Note
+acinetobact_baumannii,1,0.035714286,pathogen,NA
+acut_gastroenter,2,0.071428571,disease,NA
+acut_hepat,1,0.035714286,disease,NA
+acut_respiratori,2,NA,not-useful,too general
+aed_aegypti,1,0.035714286,reservoir,NA
+aeruginosa_isol,1,0.035714286,pathogen,NA
+ag_research,1,0.035714286,not-useful,too general
+allel_frequenc,1,0.035714286,population,NA
+amino_acid,7,NA,not-useful,too specific
+analysi_mlva,1,0.035714286,genotype,NA
+analysi_reveal,1,NA,not-useful,too specific
+anti_hcv,1,0.035714286,not-useful,not sure what to make to this
+antibiot_resist,4,0.142857143,resistance,NA
+antigen_hbsag,1,0.035714286,molecular biology,NA
+antimicrobi_resist,2,0.071428571,resistance,NA
+antimicrobi_suscept,1,0.035714286,resistance,NA
+associ_studi,2,0.071428571,not-useful,too general
+attenu_vaccin,1,0.035714286,vaccine,NA
+aureu_isol,1,0.035714286,pathogen,NA
+aureu_mrsa,1,0.035714286,resistance,NA
+aureu_strain,1,0.035714286,molecular biology,NA
+avian_influenza,1,0.035714286,reservoir,NA
+basal_core,1,0.035714286,disease,NA
+baumannii_clinic,1,0.035714286,pathogen,NA
+baumannii_isol,1,0.035714286,pathogen,NA
+baumannii_strain,1,0.035714286,characterization ,NA
+beij_famili,1,NA,not-useful,too specific
+beij_strain,1,NA,not-useful,too specific
+beta_lactamas,1,0.035714286,resistance,NA
+bla_ctx,1,0.035714286,resistance,NA
+bla_oxa,1,0.035714286,resistance,NA
+breast_cancer,1,0.035714286,disease,NA
+cancer_patient,1,0.035714286,disease,NA
+cancer_risk,1,0.035714286,disease,NA
+candid_gene,1,0.035714286,genome,NA
+capsid_protein,1,0.035714286,molecular biology,NA
+carbapenem_resist,2,0.071428571,resistance,NA
+carbapenemas_gene,1,0.035714286,resistance,NA
+carcinoma_hcc,1,0.035714286,disease,NA
+care_unit,1,0.035714286,outbreak,usuall there are spreads in hospitals
+cassett_chromosom,1,0.035714286,molecular biology,NA
+cell_carcinoma,1,0.035714286,disease,NA
+cervic_cancer,1,0.035714286,disease,NA
+cervic_lesion,1,0.035714286,disease,NA
+chain_reaction,9,NA,not-useful,I don't care about methods
+chain_reaction,5,0.178571429,not-useful,don't care about the method
+cholera_epidem,1,0.035714286,outbreak,NA
+cholera_isol,1,0.035714286,pathogen,NA
+cholera_outbreak,1,0.035714286,outbreak,NA
+cholera_pandem,1,0.035714286,outbreak,NA
+cholera_strain,1,0.035714286,characterization,NA
+cholera_toxin,1,0.035714286,molecular biology,NA
+chromosom_mec,1,0.035714286,resistance,NA
+chronic_hbv,1,0.035714286,disease,NA
+chronic_hcv,1,0.035714286,disease,NA
+chronic_hepat,3,0.107142857,disease,NA
+circoviru_type,1,0.035714286,characterization,NA
+circul_recombin,1,0.035714286,molecular biology,NA
+clinic_isol,5,0.178571429,not-useful,too general
+clinic_sampl,1,NA,not-useful,too general
+clonal_complex,1,0.035714286,molecular biology,NA
+close_relat,9,NA,not-useful,too specific
+close_relat,7,0.25,not-useful,too general
+coli_isol,2,NA,NA,NA
+coli_isol,1,0.035714286,pathogen,NA
+coli_stec,1,0.035714286,resistance,NA
+coli_strain,1,0.035714286,characterization,NA
+colorect_cancer,1,0.035714286,disease,NA
+commun_acquir,1,0.035714286,outbreak,NA
+compar_genom,1,NA,genome,comparitive genomics might also be interesting
+complet_genom,5,NA,genome,might be useful to see how people present full genomes
+complet_genom,4,0.142857143,genome,NA
+confid_interv,2,0.071428571,not-useful,don't care about the method
+core_promot,1,0.035714286,molecular biology,NA
+coronaviru_mer,1,0.035714286,pathogen,NA
+coronaviru_sar,1,0.035714286,pathogen,NA
+cov_genom,1,0.035714286,genome,NA
+cov_infect,1,0.035714286,pathogen,NA
+dengu_epidem,1,0.035714286,outbreak,NA
+dengu_fever,1,0.035714286,disease,NA
+dengu_infect,1,0.035714286,pathogen,NA
+dengu_outbreak,1,0.035714286,outbreak,NA
+dengu_viru,1,0.035714286,pathogen,NA
+dengu_virus,1,0.035714286,pathogen,NA
+denv_serotyp,1,0.035714286,clinical,NA
+develop_countri,1,0.035714286,not-useful,NA
+diarrhea_viru,1,0.035714286,disease,NA
+discriminatori_power,1,0.035714286,not-useful,don't care about the method
+divers_index,1,0.035714286,population,"microbiome, or intrahost diversity"
+dna_level,1,0.035714286,not-useful,too general
+drug_resist,3,NA,resistance,NA
+drug_suscept,1,0.035714286,resistance,NA
+drug_user,1,0.035714286,not-useful,too specific
+east_respiratori,1,0.035714286,disease,MERS
+electrophoresi_pfge,4,0.142857143,not-useful,don't care about the method
+enterica_serotyp,1,0.035714286,clinical,NA
+enterica_serovar,1,0.035714286,clinical,NA
+enterica_subsp,1,0.035714286,molecular biology,NA
+enterococcu_faecium,1,0.035714286,pathogen,NA
+epidem_diarrhea,1,0.035714286,disease,NA
+epidemiolog_investig,1,0.035714286,outbreak,"might be too general, but see possiblity of related terms"
+epidemiolog_studi,1,0.035714286,not-useful,too general
+esbl_produc,1,0.035714286,resistance,NA
+escherichia_coli,2,0.071428571,pathogen,NA
+extend_spectrum,1,0.035714286,resistance,NA
+field_gel,8,NA,not-useful,method
+form_crf,1,NA,not-useful,too specific
+fragment_length,1,0.035714286,not-useful,too general
+gastric_cancer,1,0.035714286,disease,NA
+gastroenter_outbreak,1,0.035714286,outbreak,NA
+gel_electrophoresi,8,NA,not-useful,I don't care about methods
+gene_encod,1,0.035714286,genome,NA
+gene_express,1,0.035714286,genome,NA
+gene_segment,2,0.071428571,genome,NA
+genet_divers,9,NA,population,NA
+genet_divers,7,0.25,genetic-diversity,NA
+genet_factor,1,0.035714286,genome,NA
+genet_variant,1,0.035714286,genome,NA
+genet_variat,1,0.035714286,genome,NA
+genom_constel,1,0.035714286,genome,NA
+genom_copi,1,NA,not-useful,not sure what to make to this
+genom_epidemiologi,1,0.035714286,not-useful,too general
+genom_island,1,0.035714286,molecular biology,NA
+genom_segment,1,0.035714286,not-useful,too general
+genom_sequenc,24,NA,not-useful,too general
+genom_sequenc,22,0.785714286,not-useful,too general
+genom_wide,4,NA,not-useful,too general
+genom_wide,3,0.107142857,genome,NA
+genotyp_constel,1,0.035714286,genotype,NA
+genotyp_gii,1,0.035714286,genotype,NA
+gii_gii,1,0.035714286,molecular biology,NA
+hand_foot,1,0.035714286,not-useful,too specific
+hav_genom,1,0.035714286,genome,NA
+hav_rna,1,NA,clinical,NA
+hbeag_neg,1,0.035714286,clinical,NA
+hbsag_posit,1,0.035714286,clinical,NA
+hbv_carrier,1,0.035714286,clinical,NA
+hbv_dna,1,0.035714286,not-useful,too general
+hbv_genom,1,0.035714286,genome,NA
+hbv_genotyp,1,0.035714286,genotype,NA
+hbv_infect,1,0.035714286,pathogen,NA
+hbv_strain,1,0.035714286,characterization,NA
+hcv_antibodi,1,0.035714286,molecular biology,NA
+hcv_genom,1,0.035714286,genome,NA
+hcv_genotyp,1,0.035714286,genotype,NA
+hcv_infect,1,0.035714286,disease,NA
+hcv_rna,1,0.035714286,molecular biology,NA
+helicobact_pylori,1,0.035714286,pathogen,NA
+hemolyt_urem,1,0.035714286,disease,NA
+hepatocellular_carcinoma,2,0.071428571,disease,NA
+hev_infect,1,0.035714286,pathogen,NA
+hev_strain,1,0.035714286,characterization,NA
+highli_pathogen,1,0.035714286,not-useful,too general
+hiv_infect,1,0.035714286,pathogen,NA
+hiv_type,1,0.035714286,characterization,NA
+hospit_children,1,NA,outbreak,potenitally a hospital outbreak
+hpv_dna,1,0.035714286,not-useful,too general
+hpv_genom,1,0.035714286,genome,NA
+hpv_genotyp,1,0.035714286,genotype,NA
+hpv_infect,1,0.035714286,pathogen,NA
+hpv_neg,1,0.035714286,clinical,on the fence about this being clinical
+hpv_posit,1,0.035714286,clinical,NA
+hpv_type,1,0.035714286,characterization,NA
+human_bocaviru,1,NA,pathogen,NA
+human_immunodefici,1,0.035714286,disease,NA
+human_influenza,1,0.035714286,disease,NA
+human_metapneumoviru,1,NA,not-useful,will use metapenuoviru_hmpv  instead
+human_noroviru,1,0.035714286,pathogen,NA
+human_papilloma,1,0.035714286,pathogen,NA
+human_papillomaviru,1,0.035714286,pathogen,NA
+human_papillomavirus,1,0.035714286,pathogen,NA
+human_rotaviru,1,0.035714286,pathogen,NA
+immun_respons,3,0.107142857,not-useful,too general
+immunodefici_viru,1,0.035714286,pathogen,NA
+increas_risk,1,0.035714286,not-useful,too general
+infect_individu,1,0.035714286,not-useful,too general
+infect_patient,2,0.071428571,not-useful,too general
+influenza_viru,1,0.035714286,pathogen,NA
+influenza_virus,1,0.035714286,pathogen,NA
+insert_sequenc,1,0.035714286,molecular biology,NA
+intens_care,1,0.035714286,outbreak,instensive care units tend to be the site of outbreaks
+interspers_repetit,1,0.035714286,genotype,NA
+klebsiella_pneumonia,1,0.035714286,pathogen,NA
+lactamas_esbl,1,0.035714286,resistance,NA
+lactamas_produc,1,0.035714286,resistance,NA
+length_genom,1,0.035714286,not-useful,too general
+length_polymorph,1,0.035714286,not-useful,too general
+live_attenu,1,0.035714286,vaccine,NA
+liver_diseas,3,0.107142857,disease,NA
+locu_variabl,1,0.035714286,not-useful,too general
+locu_vntr,1,0.035714286,genotype,NA
+lower_respiratori,1,NA,disease,NA
+mec_sccmec,1,0.035714286,resistance,NA
+mer_cov,1,0.035714286,pathogen,NA
+meta_analysi,1,0.035714286,not-useful,too general
+metapneumoviru_hmpv,1,NA,pathogen,NA
+methicillin_resist,1,0.035714286,resistance,NA
+methicillin_suscept,1,0.035714286,resistance,NA
+middl_east,1,0.035714286,not-useful,too specific
+miru_vntr,1,0.035714286,genotype,NA
+mlva_genotyp,1,0.035714286,genotype,NA
+mlva_method,1,0.035714286,not-useful,don't care about the method
+mlva_profil,1,0.035714286,genotype,NA
+mlva_type,1,0.035714286,genotype,NA
+molecular_character,1,0.035714286,not-useful,too general
+molecular_epidemiologi,9,NA,not-useful,too general
+molecular_epidemiologi,6,0.214285714,not-useful,too general
+molecular_type,1,0.035714286,not-useful,too general
+mouth_diseas,1,0.035714286,disease,NA
+mrsa_clone,1,0.035714286,resistance,NA
+mrsa_isol,1,0.035714286,pathogen,NA
+mrsa_strain,1,0.035714286,characterization ,decided that strain was always an indicator of characteriation
+multi_locu,1,0.035714286,not-useful,too general
+multidrug_resist,5,0.178571429,resistance,NA
+multilocu_sequenc,5,0.178571429,not-useful,too general
+multilocu_variabl,1,0.035714286,not-useful,too general
+multipl_locu,1,0.035714286,not-useful,too general
+mycobacteri_interspers,1,0.035714286,genotype,NA
+mycobacterium_tuberculosi,1,0.035714286,pathogen,NA
+nasopharyng_aspir,1,NA,not-useful,too specific
+neutral_antibodi,1,NA,not-useful,too specific
+noroviru_genom,1,0.035714286,genome,NA
+noroviru_genotyp,1,0.035714286,genotype,NA
+noroviru_gii,1,0.035714286,characterization,NA
+noroviru_infect,1,0.035714286,pathogen,NA
+noroviru_nov,1,0.035714286,pathogen,NA
+noroviru_outbreak,1,0.035714286,outbreak,NA
+noroviru_strain,1,0.035714286,characterization,NA
+nosocomi_infect,1,0.035714286,disease,NA
+nucleotid_polymorph,4,NA,not-useful,too general
+nucleotid_polymorph,3,0.107142857,not-useful,too general
+nucleotid_sequenc,7,NA,not-useful,too general
+nucleotid_sequenc,5,0.178571429,not-useful,too general
+odd_ratio,3,0.107142857,not-useful,don't care about the method
+pandem_influenza,1,0.035714286,outbreak,NA
+panton_valentin,1,0.035714286,resistance,NA
+papilloma_viru,1,0.035714286,pathogen,NA
+papillomaviru_hpv,1,0.035714286,pathogen,NA
+papillomaviru_type,1,0.035714286,characterization,NA
+papillomavirus_hpv,1,0.035714286,pathogen,NA
+pathogen_avian,1,0.035714286,reservoir,NA
+pathogen_island,1,0.035714286,molecular biology,NA
+pcr_assai,1,NA,not-useful,I don't care about methods
+pcr_method,1,NA,not-useful,I don't care about methods
+pedv_strain,1,0.035714286,characterization,NA
+phage_type,1,0.035714286,characterization,NA
+phylogenet_analysi,14,NA,population,think this one over
+phylogenet_analysi,11,0.392857143,phylogeny,NA
+pig_farm,1,0.035714286,zoonotic,"In this case, and based on the other documents with this term, it's not necessarily a disease source, but a disease effecting pig primarily."
+plasmid_mediat,1,NA,resistance,usually a drug resistance context
+pneumonia_isol,1,0.035714286,disease,NA
+pneumonia_strain,1,0.035714286,characterization,NA
+polymeras_chain,8,NA,not-useful,I don't care about methods
+polymeras_chain,5,0.178571429,not-useful,don't care about the method
+polymorph_rflp,1,0.035714286,genotype,NA
+polymorph_snp,1,0.035714286,genotype,NA
+popul_structur,1,NA,not-useful,not sure what to make to this
+porcin_circoviru,1,0.035714286,reservoir,NA
+porcin_epidem,1,0.035714286,pathogen,Porcine reproductive and respiratory syndrome virus
+porcin_reproduct,1,0.035714286,pathogen,NA
+posit_sampl,1,NA,not-useful,too general
+produc_escherichia,1,0.035714286,pathogen,NA
+produc_klebsiella,1,0.035714286,pathogen,NA
+promot_bcp,1,0.035714286,resistance,NA
+prostat_cancer,1,0.035714286,disease,NA
+pseudomona_aeruginosa,1,0.035714286,pathogen,NA
+public_health,2,NA,population,think this one over
+public_health,1,0.035714286,not-useful,too general
+puls_field,8,NA,not-useful,I don't care about methods
+puls_field,7,0.25,not-useful,don't care about the method
+rapid_detect,1,NA,not-useful,too general - could be clinical diagnosis or drug resistance
+reaction_pcr,2,NA,not-useful,I don't care about methods
+reaction_pcr,1,0.035714286,not-useful,don't care about the method
+read_frame,1,0.035714286,not-useful,too general
+real_time,2,NA,not-useful,I don't care about methods - likeli refers to PCR
+real_time,1,0.035714286,not-useful,don't care about the method
+reassort_event,1,0.035714286,molecular biology,NA
+recombin_form,1,0.035714286,molecular biology,NA
+repeat_analysi,1,0.035714286,not-useful,too general
+repeat_vntr,2,NA,genotype,NA
+repeat_vntr,1,0.035714286,genotype,NA
+repetit_unit,1,0.035714286,genotype,NA
+resist_acinetobact,1,0.035714286,resistance,NA
+resist_determin,3,NA,resistance,NA
+resist_determin,2,0.071428571,resistance,NA
+resist_enterococci,1,0.035714286,resistance,NA
+resist_enterococcu,1,0.035714286,resistance,NA
+resist_gene,5,0.178571429,resistance,NA
+resist_isol,1,0.035714286,not-useful,too general
+resist_klebsiella,1,NA,resistance,NA
+resist_mdr,1,0.035714286,resistance,NA
+resist_salmonella,1,0.035714286,resistance,NA
+resist_staphylococcu,1,0.035714286,resistance,NA
+resist_tuberculosi,1,0.035714286,resistance,NA
+respiratori_infect,1,NA,disease,NA
+respiratori_syncyti,1,NA,not-useful,too general
+respiratori_syndrom,2,0.071428571,disease,NA
+respiratori_tract,1,NA,not-useful,too general
+restrict_fragment,1,0.035714286,clinical,NA
+revers_transcript,4,NA,molecular biology,
+revers_transcript,2,0.071428571,not-useful,too specific
+risk_factor,4,NA,not-useful,too general
+risk_factor,3,0.107142857,not-useful,too general
+risk_hpv,1,0.035714286,clinical,NA
+risk_human,1,0.035714286,not-useful,too general
+rotaviru_infect,1,0.035714286,pathogen,NA
+rotaviru_strain,1,0.035714286,characterization,NA
+rotaviru_vaccin,1,0.035714286,vaccine,NA
+rva_strain,1,0.035714286,characterization,NA
+salmonella_enterica,1,0.035714286,pathogen,NA
+salmonella_genom,1,0.035714286,genome,NA
+salmonella_isol,1,0.035714286,pathogen,NA
+salmonella_serovar,1,0.035714286,reservoir,NA
+salmonella_strain,1,0.035714286,characterization,NA
+salmonella_typhimurium,1,0.035714286,pathogen,NA
+sar_coronaviru,1,0.035714286,pathogen,NA
+sar_cov,1,0.035714286,pathogen,NA
+sar_epidem,1,0.035714286,outbreak,NA
+sar_outbreak,1,0.035714286,outbreak,NA
+sccmec_type,1,0.035714286,characterization,NA
+sequenc_analysi,5,NA,not-useful,too general
+sequenc_analysi,4,0.142857143,not-useful,too general
+sequenc_type,8,NA,not-useful,NA
+sequenc_type,7,0.25,not-useful,don't care about the method
+serovar_enteritidi,1,0.035714286,reservoir,NA
+serovar_typhimurium,1,0.035714286,reservoir,NA
+serum_sampl,2,0.071428571,not-useful,too specific
+seventh_pandem,1,0.035714286,not-useful,too specific
+sever_acut,1,0.035714286,not-useful,too general
+shiga_toxin,1,0.035714286,molecular biology,NA
+signific_associ,1,0.035714286,not-useful,statistical significant strike again!
+singl_nucleotid,4,NA,not-useful,NA
+singl_nucleotid,3,0.107142857,not-useful,too general
+spa_type,1,0.035714286,genotype,NA
+spectrum_beta,1,0.035714286,resistance,NA
+squamou_cell,1,0.035714286,disease,NA
+staphylococc_cassett,1,0.035714286,molecular biology,NA
+staphylococcu_aureu,1,0.035714286,pathogen,NA
+statist_signific,1,0.035714286,not-useful,everything is statistically significant
+stool_sampl,3,NA,not-useful,NA
+stool_sampl,2,0.071428571,not-useful,too specific
+strain_circul,1,0.035714286,epidemiology,NA
+strain_detect,1,0.035714286,not-useful,too general
+strain_isol,7,NA,not-useful,NA
+strain_isol,6,0.214285714,not-useful,too general
+studi_design,1,NA,not-useful,NA
+studi_gwa,1,0.035714286,not-useful,too general
+subsp_enterica,1,0.035714286,characterization,NA
+surfac_antigen,1,0.035714286,molecular biology,NA
+syncyti_viru,1,NA,not-useful,NA
+syndrom_coronaviru,1,0.035714286,disease,NA
+syndrom_sar,1,0.035714286,disease,NA
+syndrom_viru,1,0.035714286,not-useful,too general
+tandem_repeat,3,0.107142857,genotype,NA
+tandem_repeat,2,NA,not-useful,NA
+time_pcr,1,NA,not-useful,NA
+time_revers,1,NA,not-useful,NA
+tor_biotyp,1,0.035714286,pathogen,NA
+tor_strain,1,0.035714286,characterization,NA
+toxin_produc,1,0.035714286,not-useful,NA
+tract_infect,1,NA,not-useful,too general
+transcript_polymeras,1,NA,not-useful,NA
+tuberculosi_complex,1,0.035714286,characterization,too general
+tuberculosi_isol,1,0.035714286,pathogen,NA
+tuberculosi_strain,1,0.035714286,characterization,NA
+type_method,1,0.035714286,not-useful,too general
+type_mlst,2,0.071428571,genotype,NA
+typhimurium_isol,1,0.035714286,pathogen,speific enugh relative to other isol designations
+uniqu_recombin,1,NA,not-useful,NA
+unit_variabl,1,0.035714286,not-useful,too general
+urem_syndrom,1,0.035714286,disease,NA
+vaccin_candid,1,0.035714286,vaccine,NA
+vaccin_develop,1,0.035714286,vaccine,NA
+vaccin_strain,1,0.035714286,characterization,NA
+valentin_leukocidin,1,0.035714286,resistance,NA
+vancomycin_resist,1,0.035714286,resistance,NA
+vibrio_cholera,1,0.035714286,pathogen,NA
+viral_gastroenter,1,0.035714286,not-useful,too general
+viral_genom,5,NA,not-useful,NA
+viral_genom,4,0.142857143,genome,NA
+viral_hepat,1,0.035714286,pathogen,NA
+viral_load,2,0.071428571,clinical,NA
+viru_denv,1,0.035714286,pathogen,NA
+viru_genotyp,2,0.071428571,genotype,NA
+viru_hav,1,0.035714286,pathogen,NA
+viru_hbv,1,0.035714286,pathogen,NA
+viru_hcv,1,0.035714286,pathogen,NA
+viru_hev,1,0.035714286,pathogen,NA
+viru_infect,3,0.107142857,not-useful,too general
+viru_isol,4,NA,not-useful,NA
+viru_isol,3,0.107142857,not-useful,too general
+viru_pedv,1,0.035714286,pathogen,NA
+viru_prrsv,1,0.035714286,pathogen,NA
+viru_serotyp,1,0.035714286,clinical,NA
+viru_type,2,0.071428571,characterization,NA
+virul_factor,1,0.035714286,molecular biology,NA
+virul_gene,2,0.071428571,genome,NA
+virus_isol,1,0.035714286,not-useful,too general
+vntr_analysi,1,0.035714286,genotype,NA
+vntr_loci,1,0.035714286,genotype,NA
+vntr_type,1,0.035714286,genotype,NA
+wide_associ,2,0.071428571,not-useful,too general
+wide_signific,1,0.035714286,not-useful,too general
+wild_type,2,0.071428571,not-useful,too general

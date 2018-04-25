@@ -1,0 +1,1650 @@
+---
+title: "GEViT Text mining analysis"
+output:
+  html_document:
+    toc: yes
+  html_notebook:
+    fig_height: 6
+    number_sections: yes
+    toc: yes
+---
+
+# Obtaining Pubmed data set
+
+There are several code blocks that are not run in this notebook because it would take too long or take too much RAM. Consequently are instances where the computation has been done on an external sever. All the datasets generated along the way are stored in the "data" subfolder.
+
+```{r setup,message=FALSE, warning= FALSE, echo=FALSE}
+library(RISmed)
+library(XML)
+library(dplyr)
+library(tidytext)
+library(tidyr)
+library(stringr)
+library(tsne)
+library(ggplot2)
+library(dbscan)
+library(SnowballC)
+library(ggrepel)
+
+#some supporting scripts I've written
+source("utilityScript.R")
+```
+The data aquistion code below is not run in this notebook. It won't take very long, but the data objects have been saved a long the way, and so for simplicity, the code it shown by the data objects are loaded in the data cleaning and analysis (which don't take very long to run, with the exception of tSNE)
+
+```{r getData, eval=FALSE, warning=FALSE, messages=FALSE}
+
+# initial query, figure out how many articles there are
+# query was run on Thursday July 13th, 2017 at 17:15 PDT
+
+query1<-'(genome AND (outbreak OR pandemic OR epidemic)) OR "genomic epidemiology"'
+resQ1 <- EUtilsSummary(query1, type='esearch', db='pubmed')
+
+resQ1 <- EUtilsSummary(query1, type='esearch', db='pubmed',retmax=resQ1@count) #9715 articles
+
+#second query
+query2<-'(genomic epidemiology OR molecular epidemiology) AND (bacteri* OR vir* OR pathogen) AND Genome' 
+resQ2 <- EUtilsSummary(query2, type='esearch', db='pubmed')
+resQ2 <- EUtilsSummary(query2, type='esearch', db='pubmed',retmax=resQ2@count) #
+
+#common elements between queries
+intersect(resQ1@PMID,resQ2@PMID) %>% length()
+setdiff(resQ1@PMID,resQ2@PMID) %>% length()
+setdiff(resQ2@PMID,resQ1@PMID) %>% length()
+
+pmidUnique<-c(resQ2@PMID,resQ1@PMID) %>% unique() #20,702 articles
+
+```
+
+The two queries yeild slightly different datasets. It may be that because the first query is more specific and relating to outbreaks, it would not have some of the same content as the second query. Although, in playing around with multiple query options, it seems that different search terms can return different sets. For simplicity I will stick with these two. 
+
+```{r getDataFromQueries, eval=FALSE, warning=FALSE, messages=FALSE}
+#need to put everything together in batches, 2000 articles was the magic number before time outs occur
+numVals<-seq(from=0,to=length(pmidUnique),by=2000)
+numVals<-c(numVals,tail(numVals, n=1) + (length(pmidUnique) %% 2000))
+
+genEpiData<-c()
+for(i in 1:(length(numVals)-1)){
+    #to make this faster, form new query on ID run in parallel
+    start = numVals[i]+1
+    end = numVals[i + 1]
+    genEpiData <- rbind(genEpiData,formatData(pmidUnique[start:end]))
+}
+```
+
+We can calculate the distribution of publication dates for the various articles:
+
+```{r getDataPlotYears, eval=FALSE, warning=FALSE, messages=FALSE}
+
+yearCount<-genEpiData %>%
+  group_by(YearPub) %>%
+  count() %>%
+  select(YearPub,n)
+
+ggplot(genEpiData, aes(x=YearPub)) +
+  geom_bar()+
+  theme_bw()
+```
+
+Many of the articles are published in the 2000's when next generation sequcencing was introduced. I am going to stick with articles published from 2000 onwards, and I will also find which articles may have full text available by linking to their PMC ID.
+ 
+```{r getDataAddPMIC, eval=FALSE, warning=FALSE, messages=FALSE}
+
+genEpiData<-genEpiData %>% filter(YearPub > 1999)
+
+#will convert some Pubmed IDS to PMC IDs in order to grab some full texts later
+#i've already read and saved this data file for an earlier analysis
+
+idConv<-readRDS(file="../data/PMC-ids.RDS")
+convItems<-idConv %>%
+  filter(PMID %in% as.numeric(as.character(genEpiData$PMID))) %>%
+  select(PMID,PMCID,DOI) %>%
+  mutate(PMID = factor(PMID))
+
+genEpiData<-full_join(genEpiData,convItems)
+ 
+#save the data set
+saveRDS(file = "data/genEpiData_initialQuery2.RDS",genEpiData) #about four articles could not be queried, total = 17988 articles
+```
+
+# Cleaning the data
+
+## Prepare data using tidy text
+Cleaning the dataset uses guidance from the tidytext online guide, it's very useful and worth checking out. I've also added a few more filters and stemmed the terms using Porter's alogorithm.
+
+```{r tidyTextPrep, eval=FALSE, warning=FALSE, messages=FALSE}
+#loading the dataset as previous code was not actually run (takes too long)
+genEpiData<-readRDS(file="../data/genEpiData_initialQuery2.RDS")
+
+#commonly used words in the english language
+data(stop_words)
+
+#remove some common terms that will occur in abstract
+customStopTerms<-data.frame(word=c("abstract", "text", "abstracttext","introduction","background","method","methods","methodology","conclusion","conclusions","objectives","results","result","we","materials","purpose","significance","significant","mg"))
+
+genEpitext_df <- genEpiData[,c("PMID","Title","Abstract")] %>%
+  mutate(text = paste0(Title,Abstract)) %>%
+  unnest_tokens(word, text) %>%
+  mutate(word = strsplit(as.character(word), "\\.")) %>% #some text is stuck together for example person.METHODS so, I am fixing that
+  tidyr::unnest(word) %>% 
+  anti_join(stop_words) %>%
+  anti_join(customStopTerms) %>%
+  filter(str_length(word)>2) %>% #only keeps words with length of 2 or greater (AMR, a useful abbreviation, is three characters long) %>%
+  filter(!str_detect(word,"\\d")) %>% #get rid of any numbers
+  mutate(wordStemmed = wordStem(word)) %>% #finally, get the word stems (Porter's algorithm)
+  select(PMID,word,wordStemmed)
+```
+
+## Filtering out terms that occur too frequently & too infrequently
+
+Here I calculate the term-frequency inverse document frequency metric for each individual work in the dataset. Then I filter out words that occur very infrequently or in nearly all of the documents. I have made an arbitrary choice to not keep terms that occur in fewer than 1.0 % of documents or greater than 70% of documents. I do want coarser, as opposed to finer, clusters because my intention is to do a subset analysis within clusters once I know what they are. A word that is present in almost ~175 documents is a pretty important term, but with nearly 18,000 documents, I would prefer clusters with membership of roughly 200 or to make it meaningful for my larger goals.
+
+```{r tidyTextFilter, eval=FALSE, warning=FALSE, messages=FALSE}
+#for the future, store the transformations that a single word can take on after stemming
+#wordToStemmed<-genEpitext_df %>% select(word,wordStemmed) %>% unique()
+
+# I will now also add the term frequency document frequency values.
+genEpitext_df<-genEpitext_df %>%
+  count(PMID, wordStemmed, sort = TRUE) %>%
+  ungroup() %>%
+  bind_tf_idf(wordStemmed, PMID, n)
+
+totalArticles<-nrow(genEpiData)
+
+wordToRemove<-genEpitext_df %>%
+  group_by(wordStemmed) %>%
+  count() %>%
+  filter(nn < totalArticles*0.01 | nn > totalArticles*0.7)
+
+genEpitext_df<-anti_join(genEpitext_df,wordToRemove,by="wordStemmed") #there are 1167 unique terms that meet this critiera
+
+#saving the tidytext dataset
+saveRDS(file="data/genEpiData_initialQuery2_tidyData.RDS",genEpitext_df)
+```
+
+## Creating a bigram dataset
+
+In this analysis, I've reasoned that single terms will provide more general clustering (for example, I would want all articles related to tuberculosis, or drug resistance to be a single cluster), but bigrams can be useful to resolve more fined grained structured. 
+
+```{r bigrams, eval=FALSE, warning=FALSE, messages=FALSE}
+ bigram_df <- genEpiData[,c("PMID","Title","Abstract")] %>%
+  mutate(text = paste0(Title,Abstract)) %>%
+  unnest_tokens(bigram, text,token = "ngrams",n=2) %>%
+  #cleaning up each bigram
+  separate(bigram, c("word1", "word2"), sep = " ") %>%
+  mutate(word1 = strsplit(as.character(word1), "\\.")) %>%
+  tidyr::unnest(word1) %>%
+  mutate(word2 = strsplit(as.character(word2), "\\.")) %>%
+  tidyr::unnest(word2) %>% 
+  filter(!(word1 %in% c(stop_words$word,customStopTerms$word))) %>%
+  filter(!(word2 %in% c(stop_words$word,customStopTerms$word))) %>%
+  filter(str_length(word1)>2) %>%
+  filter(!str_detect(word1,"\\d")) %>% 
+  filter(str_length(word2)>2) %>%
+  filter(!str_detect(word2,"\\d")) %>%
+  mutate(word1 = wordStem(word1)) %>%
+  mutate(word2 = wordStem(word2)) %>%
+  unite(bigram,word1,word2) %>% 
+  select(PMID,bigram)
+
+#calculate tf_idf
+bigram_df<-bigram_df %>%
+  count(PMID, bigram, sort = TRUE) %>%
+  ungroup() %>%
+  bind_tf_idf(bigram, PMID, n)
+
+saveRDS(file="data/genEpiData_initialQuery2_BIGRAM_tidyData.RDS",bigram_df)
+
+```
+
+
+#Analysis
+
+Most of this analysis can be be run on a laptop with 8 GB of RAM. Keep an eye out whether or not chrome is open because it takes up a lot of memory and I've often had to close it an other applications to run this analysis. One expection is the initial tSNE clustering with ~18000 articles, which requires a server with more RAM to run. I've provided the analysis code here, but load a previously saved tSNE Clustered dataset for the remainder of the analysis. 
+
+As a note, the point of this analysis is not for the algorithms to drive everything. It's actually for the algorithms to provide some structure that I used to make analytic decisions about or even revise. In this sense, the point is more to work together with the algorithm then default soley on my judgement's or the methods. Places where subjective decisions have been made are clearly indicated. 
+
+## Single term cluster analysis
+For analysis, I will construct a document term matrix from the single term dataset, and then I will apply the tSNE algorithm to cluster data, and the HBDSCAN algorithm to derived clusters. 
+
+
+### Creating the document term matrix
+The document term frequency uses the tf_idf metric to assess teh distribution of terms (columns) across documents (rows). This will be provided to the tsne algorithm to cluster documents.
+
+```{r dtmPrep, message = FALSE, warning=FALSE}
+
+#load data, since RMDnote does not run the earlier steps
+genEpitext_df<-readRDS(file="data/genEpiData_initialQuery2_tidyData.RDS")
+
+#now create dtm
+dtm<-genEpitext_df %>%
+  select(PMID,wordStemmed,tf_idf) %>%
+  spread(PMID,tf_idf)
+
+colVals<-dtm$wordStemmed
+rowVals<-colnames(dtm)[2:ncol(dtm)]
+
+dtm<-as.matrix(dtm[,2:ncol(dtm)]) %>% t()
+rownames(dtm)<-rowVals
+colnames(dtm)<-colVals
+
+dtm[is.na(dtm)]<-0
+
+saveRDS(file="data/dtm_bigraminitialQuery2.RDS",dtm)
+```
+
+### tSNE
+
+tSNE takes a very long time to run (hours). There are two tSNE packages in R (tsne, and Rtsne) which implement slightly different versions of the tSNE algorithm (the tSNE package is akin to the initially published version). The RTsne package is considerably faster (espeically when run using nearly default parameters), in part because it allows for some inaccuraies via the theta parameter. I've used primarily Rtsne for analysis, with the default theta of 0.5.
+
+I have played around with different versions of tSNE and opted to (here) only show the ones for perplexity parameter  = 100 (the deault is either 30 or 50 depending on the package). Without any additional analysis, this is what the raw tsne results look like:
+
+```{r tsneClustering, message=F, warning=F}
+#load pre-run analysis on server
+rtsne<-readRDS(file="data/rtsne_perplexity_100.RDS")
+
+tsneCord<-data.frame(PMID = rownames(dtm),
+                     comp1 =rtsne$Y[,1],
+                     comp2 = rtsne$Y[,2])
+
+ggplot(tsneCord,aes(x=comp1,y=comp2)) +
+  geom_point(alpha=0.2)+
+  labs(x="tsneComp1",
+       y="tsneComp2")+
+  theme_bw()
+
+ggsave("PlainTsnePlot.pdf")
+
+```
+It is possible to already see several clusters (note, the total number of documents here is 17974), with sort of one large group in the centre (still split into some clusters) and many smaller clusters to the periphery.
+
+#### Cluster tSNE results
+
+The tsne results are clustered using the HDBSCAN algorithm. The minmum number of points per cluster effects how the document clusters are assigned, so I tried a few different cluster sizes and plotted the results below. The circles indicate the boundries of the cluster, it's noteable in each image that there is one large circle that encompasses smaller ones, this is the "noise" circle and it is coloured in blue. It is the circle, which represent true clusterings that are of interest. 
+
+```{r tsneClusterSelect, message=FALSE,height=10}
+set.seed(253)
+
+minPtsVals<-c(50,75,100,125,150,250,500,1000) #trying out a bunch of different values
+
+dfPts<-c()
+for(minPts in minPtsVals){
+  cl <- hdbscan(tsneCord[,2:3], minPts = minPts) #minimum cluster size of 150 documents
+  dfPts<-rbind(dfPts,cbind(as.character(tsneCord$PMID),cl$cluster,rep(minPts,nrow(tsneCord))))
+}
+
+dfPts<-as.data.frame(dfPts)
+colnames(dfPts)<-c("PMID","cluster","groupingLevel")
+
+dfPts<-inner_join(dfPts,tsneCord)
+
+dfPts$groupingLevel<-factor(dfPts$groupingLevel,c(50,75,100,125,150,250,500,1000))
+
+dfPts %>%
+  mutate(isNoise = ifelse(cluster==0,"Noise","Signal")) %>%
+  ggplot(aes(x=comp1,y=comp2)) +
+  geom_point(alpha=0.1)+
+  theme_bw()+
+  facet_wrap(~groupingLevel) +
+  stat_ellipse(aes(group=cluster,col=isNoise))+
+  scale_colour_manual(values=c("blue","red"))+
+  theme(legend.position="None")
+
+ggsave(file="optimalParamSearch.pdf")
+
+```
+As the scaling factor exceeds 150, the data group into fewer clusters until everything appears to be noise. The sweet spot is a min pts value somewhere between 50 and 150, each with rather different number of clusters:
+
+```{r tsneClusterSize,message=FALSE,warning=FALSE}
+
+dfPts %>%
+  select(groupingLevel,cluster) %>%
+  distinct() %>%
+  group_by(groupingLevel) %>%
+  count() %>%
+  ggplot(aes(x=groupingLevel,y=n))+
+  geom_bar(stat="identity")+
+  ylab("Number of Clusterings")+
+  xlab("minPts value")+
+  geom_text(aes(label=n),nudge_y = 1,col="red")+
+  theme_bw()
+
+```
+
+The final deciding factor will be the most common term in each of the clusters. If some clusters have a common term repeating across different clusters (for example, if HIV occurs across multiple clusters), than I would consider this to be too fine grained separation.
+
+```{r tsneClusterTopics, message=F,warning=F}
+#for each grouping level, and each cluster identify the most common term
+getTopTerms<-function(clustPMID,topNVal=1,clustValue = NA){
+  clustValue<-clustValue[1]
+  
+  if(clustValue == 0)
+    return("Noise")
+  
+  topWord<-genEpitext_df %>%
+    filter(PMID %in% clustPMID) %>%
+    ungroup() %>%
+    group_by(wordStemmed) %>%
+    tally() %>%
+    arrange(-nn) %>%
+    top_n(topNVal)
+  
+  # return character and collapse top terms (useful in even of a tie)
+  topWord<-paste0(topWord$wordStemmed,collapse = "-")
+  return(topWord)
+}
+
+clustTopics<-dfPts %>%
+  group_by(groupingLevel,cluster) %>%
+  mutate(topTerms = getTopTerms(PMID,clustValue=cluster))
+
+# a small sanity check to confirm this actually worked
+clustPMID<-dfPts %>% filter(groupingLevel == 50) %>% filter(cluster == 14) %>% select(PMID)
+getTopTerms(clustPMID$PMID,clustValue=14)
+
+genEpitext_df %>%
+  filter(PMID %in% clustPMID$PMID) %>%
+  ungroup() %>%
+  count(wordStemmed)%>%
+  arrange(-nn)
+
+# ^ yes, it actually works
+
+#now, see if the same terms occur across different topics
+clustTopics %>%
+  select(topTerms,groupingLevel,cluster) %>%
+  unique() %>%
+  filter(groupingLevel %in% c(50,75,100,125,150)) %>%
+  group_by(groupingLevel,topTerms) %>%
+  count()  %>%
+  ggplot(aes(x=topTerms,y=n))+
+  geom_hline(yintercept=1,col="red")+
+  geom_bar(stat = "identity")+
+  facet_wrap(~groupingLevel,ncol=1)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle=90,hjust=1,vjust=0.5))
+```
+
+Most top terms tend to occur only in one cluster, and tend to be infectious agents or diseases (hbv, hcv, hiv, tuberculosis). Still at lower levels of minimum cluster sizes, some clusters form for other reasons. For example, "china" and "children" are their own cluster, but neither is particularily useful to me because many different diseases can occur in china (and in fact occur in other parts of the world too), and likewise many different diseases occur in children and adults. As the cluster sizes become larger (closer to 150) I (subjectively) assess that the cluster become more "useful", for example children collapses into other clusters. We can show this with a sankey diagram. It is easier to view this diagram with a larger monitor. It's possible to take a closer look at top "paths" if you will of clusters as the minPts value changes - some of the largest and most consistent paths (i.e. item stays in the same cluster) are disease driven. For example an item that is classified as HIV tends to stay within the HIV cluster until minPts value gets too high. Most of the articles are just "noise", never clustering with anything useful at all. Some positive things (again by my subject assessment) is that the less useful "china" cluster collapses into "strain", which I think is much more useful because it is a more general classification.  
+
+```{r clusterChanges, messages=FALSE,warning=FALSE,height=20}
+library(alluvial)
+tmp<-clustTopics %>%
+  group_by(PMID) %>%
+  summarise(clustPath = paste0(topTerms,collapse=";")) %>%
+  count(clustPath) %>%
+  arrange(-n)
+
+tmp %>%
+  top_n(20)
+```
+
+```{r clusterChangesSnakey,message=F,warning=F}
+tmp2<-sapply(tmp$clustPath,function(x){strsplit(x,";")}) %>% bind_rows() %>% t()
+tmp2<-as.data.frame(tmp2)
+colnames(tmp2)<-paste("minPts=",minPtsVals)
+
+tmp2$freq<-tmp$n
+
+#clean it up a bit, hide paths with fewer than 100 documents
+alluvial(tmp2[,1:8],freq=tmp2$freq,hide=tmp2$freq < 100,
+         cex=0.35,gap.width = 0,alpha=0.75,cex.axis=0.75,
+           col = ifelse(tmp2[,1] == "Noise", "orange", "grey"))
+```
+
+It's possible to see that many documents that are initially classified as noise (highlighted in the organge colour), pretty much stays noise no matter what the parameter values to change to the exception is perhaps at minPts value of 250, where everything has the term isol (for isolate). It's also possible to see the trajector of inidividual terms that I thought were odd (for example clusters with china or children), which don't actually cluster with any diseases, but instead eventually become clusters with generic terms like "genom" or "isolate" or "strain" and many more even just become noise. It's possible that these are generic molecular biology type articles, so it may not be worth discarding them. 
+
+Based upon the above analysis, I've opted to use a minPts size of 150. I'll use the subsequent analysis with the bigrams to help sort out cross-cutting topics and also to resurect some other pathogens that might have slipped into the "isol", "genome", or even "Noise" categories. So, now I will assign the official clusters to tsneCord and use tsneCord for analysis. The cluster values of 150 gives me the cleanest data, or so I have assessed, in that document cluster most clearly according to diseases or pathogens.
+
+I will also remove those articles who are mainly classified as noise all throughout different minPtValues, they might contain something useful, but for my purposes I want to boost the signal of useable articles and so I've opted to remove them. This will be a total of 2659 documents (note! This doesn't mean that the "Noise" cluster will disappear, it will still be there, but acknowledgng that those articles may have clustered usefully under different parameters, so those remain in the analysis)
+
+```{r tsneCluster, message=FALSE,height=10}
+
+veryNoiseyDocuments<-clustTopics %>%
+  group_by(PMID) %>%
+  summarise(clustPath = paste0(topTerms,collapse=";")) %>%
+  filter(clustPath %in% c("Noise;Noise;Noise;Noise;Noise;isol;genom;Noise",
+                          "Noise;Noise;Noise;Noise;Noise;isol;Noise;Noise")) %>%
+  inner_join(tsneCord)
+
+saveRDS(file="data/veryNoiseyDocuments.RDS",veryNoiseyDocuments)
+
+tsneCord<-tsneCord %>%
+  anti_join(veryNoiseyDocuments)
+
+#get the clusters for the tsne perplexity 100 plot using HDBSCAN
+cl <- hdbscan(tsneCord[,2:3], minPts = 150) #minimum cluster size of 150 documents
+tsneCord$tsneCluster<-cl$cluster
+
+#now assign the cluster topics
+tsneCord<-tsneCord%>%
+  group_by(tsneCluster) %>%
+  mutate(tsneClusterNames = getTopTerms(PMID,clustValue=tsneCluster,topNVal = 2))
+```
+
+We can plot the clusters to see what their memerbship is and how they're defined. First we'll see how the clusters are assigned using the tsne space. I am going to remove all the articles that have been labelled as "noise" by the HDBSCAN algorithm.
+
+```{r tsneClusterMembershipScatterPlot, message=F,warning=F}
+#clusterNameLabel
+clusterNames <- tsneCord %>%
+  dplyr::group_by(tsneClusterNames) %>%
+  dplyr::summarise(medX = median(comp1),
+            medY = median(comp2)) %>%
+  filter(tsneClusterNames != "Noise")
+
+
+#write using geom_ellipse
+tsneCord %>%
+  filter(tsneClusterNames != "Noise") %>% 
+  ggplot(aes(x=comp1,y=comp2,group=tsneClusterNames)) +
+  geom_point(alpha=0.2,aes(colour=tsneClusterNames))+
+  theme_bw()+
+  stat_ellipse(col="black",alpha=0.5)+
+  geom_text(data=clusterNames,aes(x=medX,y=medY,label=tsneClusterNames),col="black",fontface="bold",size=3)+
+  theme(legend.position="None")
+
+```
+
+From the above image, the clusters seems rather reasonbly assigned, there are some instances, but I want to break apart one big cluster : "genom-sequence", which does make smaller clusters when minPts = 75 (from the above analysis, 75 being the closest value to 150 where the data divide genom-sequenc into two groups), so I will borrow that clustering break down that middle group (note this is again, a subjective decision I am making).
+
+```{r tsneClsuterBreakdown, message=F,warning=F}
+
+pmidVals<- filter(tsneCord, tsneClusterNames == "genom-sequenc") %>% ungroup() %>% select(PMID)
+
+newClust<-clustTopics %>% 
+  filter(PMID %in% pmidVals$PMID) %>%
+  filter(groupingLevel==75) %>%
+  ungroup() %>%
+  group_by(cluster) %>%
+  mutate(topTerms = getTopTerms(PMID,clustValue=cluster,topNVal = 2))
+
+#some small fixes based upon manual inspection (n=1 here)
+newClust[which(newClust$topTerms== "infect-studi"), ]$topTerms<-"gene-cell"
+newClust[which(newClust$topTerms== "gene-cell"), ]$cluster<-23
+#newClust[which(newClust$topTerms== "virus-sequenc"), ]$topTerms<-"viru-sequenc"
+
+idxClust<-match(newClust$PMID,tsneCord$PMID)
+idxClust<-idxClust[!is.na(idxClust)]
+
+tsneCord[idxClust,]$tsneCluster<-newClust$cluster
+tsneCord[idxClust,]$tsneClusterNames<-newClust$topTerms
+
+
+#clusterNameLabel
+clusterNames <- tsneCord %>%
+  group_by(tsneClusterNames) %>%
+  summarise(medX = median(comp1),
+            medY = median(comp2)) %>%
+  filter(tsneClusterNames != "Noise")
+
+tsneCord %>% ungroup() %>% filter(tsneClusterNames != "Noise") %>% count() #11,416
+#write using geom_ellipse
+tsneCord %>%
+  filter(tsneClusterNames != "Noise") %>% 
+  ggplot(aes(x=comp1,y=comp2,group=tsneClusterNames)) +
+  geom_point(alpha=0.2,aes(colour=tsneClusterNames))+
+  theme_bw()+
+  labs(x="tsneComp1",
+       y="tsneComp2")+
+  stat_ellipse(col="black",alpha=0.5)+
+  geom_text(data=clusterNames,aes(x=medX,y=medY,label=tsneClusterNames),col="black",fontface="bold",size=3)+
+  theme(legend.position="None")
+
+
+saveRDS(file="data/rtsne_perplexity_100_withClusters.RDS",tsneCord)
+```
+
+```{r tsneClsuterBreakdown_PaperVersion, eval=FALSE,echo=FALSE,message=F,warning=F}
+tsneCord %>%
+  filter(tsneClusterNames != "Noise") %>% 
+  ggplot(aes(x=comp1,y=comp2,group=tsneClusterNames)) +
+  geom_point(alpha=0.2,colour="#1b9e77")+
+  theme_bw()+
+  labs(x="tsneComp1",
+       y="tsneComp2")+
+  stat_ellipse(col="black",alpha=0.5)+
+  geom_text(data=clusterNames,aes(x=medX,y=medY,label=tsneClusterNames),col="black",fontface="bold",size=3)+
+  theme(legend.position="none",
+        panel.grid.major= element_blank(),panel.grid.minor = element_blank(),
+        axis.text = element_blank(),axis.title = element_blank(),
+        panel.border = element_blank(),axis.ticks = element_blank())
+
+ggsave("primaryCluster_byPathogen.pdf",unit="cm",width=18.53,height=11.43)
+```
+
+We can also see the size (membership) of those clusters:
+
+```{r tsneClusterMembershipBarChart, message=F,warning=F}
+tsneCord %>%
+  group_by(tsneClusterNames) %>%
+  count() %>% 
+  ggplot(aes(x=reorder(tsneClusterNames,-n),y=n))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  xlab("Cluster Name")+
+  ylab("Cluster Size")+
+  theme(axis.text.x = element_text(angle = 90,hjust=1,vjust=0.5))
+```
+
+It's notable that nearly 4,000 documents (of ~18000 (22%)) could not be clustered and are classified as Noise. In total, there are 11,416 documents that remain in analysis. There may still be useful data in there, so it may not be a good idea to throw it out. Here is how the noise is scatter among the data:
+
+```{r tsneClusterNoiseDist, message=F,warning=F}
+tsneCord %>%
+  mutate(isNoise = ifelse(tsneClusterNames == "Noise","Noise","Cluster")) %>%
+  ggplot(aes(x=comp1,y=comp2,group=tsneClusterNames,colour=isNoise)) +
+  geom_point(aes(col = isNoise),alpha=0.2)+
+  theme_bw()+
+  scale_colour_manual(values=c("#1b9e77","#7570b3"))+
+  stat_ellipse()+
+  geom_text(data=clusterNames,aes(x=medX,y=medY,label=tsneClusterNames),col="black",size=3)
+```
+
+It's interesting to note the connection between the hiv-substype and tuberculosis connection. Those documents are registered as noise, however, HIV and TB are common co-infections, and that link between the two of them is an interesting bridge between thses topics. It is noteable that other such bridges are not found between other clusters - this could be because they don't exist or the signal is not strong enough to survive HDBSCAN's assumptions.
+
+A reminder that the noise articles that remain, could have been useful at some point in time (based upon the clusterPath analysis), but with a minPtsValue of 150 were classified as noise. There are some islands there that argueably could form useful clusters, but I will rely on the next analysis (bigram clustering) to tease out out that usefulness rather than rely upon the "parameter changing" analysis.
+
+Finally, I will bring back ther "very noisey documents", those that are pretty much always classified as noise, inspite of the minPts value provided to HDBSCAN.
+
+```{r veryNoiseyDocumentAnalysis, message=F,warning=F}
+
+tsneCordFull<-full_join(tsneCord,veryNoiseyDocuments)
+
+tsneCordFull[is.na(tsneCordFull$tsneCluster),]$tsneCluster<- -1
+tsneCordFull[is.na(tsneCordFull$tsneClusterNames),]$tsneClusterNames<- "veryNoisey"
+
+tsneCordFull %>%
+  mutate(isNoise = ifelse(tsneClusterNames %in% c("Noise","veryNoisey"),
+                          ifelse(tsneClusterNames == "Noise","Unclustered","Never Clustered")
+                          ,"Clustered")) %>%
+  ggplot(aes(x=comp1,y=comp2,group=tsneClusterNames,col=isNoise)) +
+  geom_point(aes(col = isNoise),alpha=0.2)+
+  labs(x="tsneComp1",
+       y="tsneComp2",
+       legend="")+
+  theme_bw()+
+  stat_ellipse(aes(alpha=isNoise),colour="black")+
+  scale_alpha_manual(values=c(0.6,0,0))+
+  scale_colour_manual(values=c("#1b9e77","#d95f02","#7570b3"))+
+  #scale_colour_manual(values=c("#fb8072","#bebada","#8dd3c7"))+
+  geom_text(data=clusterNames,aes(x=medX,y=medY,label=tsneClusterNames),fontface="bold",col="black",size=3)+
+  theme(legend.position="below")
+```
+
+The "very noisey documents"" occur everywhere and don't appear to form distinct clusters as the "noise" documents do. What this says to me is that the "very noisey documents" could very well contain some useful of interesting information, but they are difficult to coax into anyform of structure, again this was pretty much suggested by the HDBSCAN results that consistently failed to put these documents into any one cluster regardless of the parameter valuers. I will not discard the "very noisey documents" outright, but I will continue to exclude them from analysis that establishes clusters and the properties of clusters. The documents that are simply labelled "Noise" appear to form their own clusters and also hangout near known clusters, and might contain some additional useful signal.
+
+```{r veryNoiseyDocumentAnalysis_PaperVersion, eval=FALSE,echo=FALSE,message=F,warning=F}
+tsneCordFull %>%
+  mutate(isNoise = ifelse(tsneClusterNames %in% c("Noise","veryNoisey"),
+                          ifelse(tsneClusterNames == "Noise","Unclustered","Never Clustered")
+                          ,"Clustered")) %>%
+  ggplot(aes(x=comp1,y=comp2,group=tsneClusterNames,col=isNoise)) +
+  geom_point(aes(col = isNoise),alpha=0.2)+
+  labs(x="tsneComp1",
+       y="tsneComp2",
+       legend="")+
+  theme_bw()+
+  stat_ellipse(aes(alpha=isNoise),colour="black")+
+  scale_alpha_manual(values=c(0.4,0,0))+
+  scale_colour_manual(values=c("#1b9e77","#d95f02","#7570b3"))+
+  #scale_colour_manual(values=c("#fb8072","#bebada","#8dd3c7"))+
+  #geom_text(data=clusterNames,aes(x=medX,y=medY,label=tsneClusterNames),fontface="bold",col="black",size=3)+
+  theme(legend.position="none",
+        #legend.title = element_blank(),
+        panel.grid.major= element_blank(),panel.grid.minor = element_blank(),
+        axis.text = element_blank(),axis.title = element_blank(),
+        panel.border = element_blank(),axis.ticks = element_blank())
+
+ggsave(file="NoiseDistInDocs.pdf")
+```
+
+### Digging into the noise 
+
+I don't want to dig too deeply into the noisey data, but I will look to see if there are any other useful  or interesting clusters that form, and how similar or different they may be from the much more pronounced clusters. Even if the smallest cluster size is "2", there are 538 documents (analysis not show) that don't really cluster with anything, so not all the documents are very useful. The minimum cluster size that I will use here is 100, this is subjective decision because there are enough articles here to really make a compeling case (to me) that the topic of the cluster is interesting and worth-while to be it's own entity. Others doing a more nuanced analysis may disagree with this choice. 
+
+
+```{r clusterNoise, message=F,warning=F}
+noiseOnly<- filter(tsneCord,tsneClusterNames == "Noise")
+
+cl <- hdbscan(noiseOnly[,2:3], minPts = 50)
+noiseOnly$tsneCluster<-(cl$cluster + 200)
+
+noiseOnly<-noiseOnly %>%
+  group_by(tsneCluster) %>%
+  mutate(tsneClusterNames = getTopTerms(PMID,clustValue=tsneCluster,topNVal = 3))
+
+noiseClusterNames <- noiseOnly%>%
+  group_by(tsneClusterNames) %>%
+  summarise(medX = median(comp1),
+            medY = median(comp2)) %>%
+  filter(tsneClusterNames != "Noise") %>%
+   filter(tsneClusterNames != "isol-strain-genom")
+  
+
+#note - isol-strain-genom is a weird and expansize cluster, that is worth removing.
+noiseOnly %>%
+  filter(!(tsneClusterNames %in% c("Noise","isol-strain-genom"))) %>%
+  ggplot(aes(x=comp1,y=comp2,colour=tsneClusterNames,group=tsneClusterNames)) +
+  geom_point(alpha=0.2)+
+  theme_bw()+
+  stat_ellipse(col="black")+
+  geom_text(data=noiseClusterNames,aes(x=medX,y=medY,label=tsneClusterNames),col="black",size=3)+
+  scale_y_continuous(limits=c(min(tsneCord$comp2),max(tsneCord$comp2)))+
+  scale_x_continuous(limits=c(min(tsneCord$comp1),max(tsneCord$comp1)))+
+  theme(legend.position="None")
+```
+
+Finally, I'll show this with the other known clusters to see how much more useful information clustering the noise provides to the much more established clusters.
+
+```{r noiseWithClusters, message=F,warning=F}
+
+idxNoise<-match(noiseOnly$PMID,tsneCord$PMID)
+
+tmp<-tsneCord$tsneClusterNames
+tmp[idxNoise]<-noiseOnly$tsneClusterNames
+
+tmp2<-tsneCord
+tmp2$tsneClusterNames2<-tmp
+
+
+#note, useful to view this on a much larger screen
+tmp2 %>%
+  mutate(isNoise = ifelse(tsneClusterNames == "Noise","Noise","Cluster")) %>%
+  filter(!(tsneClusterNames2 %in% c("Noise","isol-strain-genom")))%>% 
+  ggplot(aes(x=comp1,y=comp2,group=tsneClusterNames2)) +
+  geom_point(aes(col = isNoise),alpha=0.2)+
+  theme_bw()+
+  #facet_wrap(~isNoise)+
+  stat_ellipse(aes(linetype=isNoise))+
+  scale_colour_manual(values=c("#1b9e77","#7570b3"))#+
+  #geom_text(data=noiseClusterNames,aes(x=medX,y=medY,label=tsneClusterNames),col="black",size=3)+
+  #geom_text(data=clusterNames,aes(x=medX,y=medY,label=tsneClusterNames),col="red",size=3)
+
+```
+Subjectively, some of these additional clusters are interesting, and others are not as much. In the subsequent bigram analysis take a look at "pathogens" and "topics". For my analysis I am mostly interesting in topics, but what is clear is that there is an overwhelming signal from pathogens in these data that make is hard to analyze topics across pathogens. What is also clear is that some of those interesting topics (like outbreaks), form their own clusters instead of being embedded within pathogen clusters. I'll show in a moment, that outbreak can be found within pathogen clusters too, but I am not certain why "outbreaks" in particular forms its own cluster.
+
+Now I will attempt to see if there are any clusters using the same parameters using the very noisey clusters. Using the smae parameter, only three clusters are formed
+
+```{r veryNoiseClusters, message=F, warning=F}
+
+cl <- hdbscan(veryNoiseyDocuments[,3:4], minPts = 50)
+
+veryNoiseyDocuments$tsneCluster<-(cl$cluster + 300)
+
+veryNoiseyDocuments<-veryNoiseyDocuments %>%
+  group_by(tsneCluster) %>%
+  mutate(tsneClusterNames = getTopTerms(PMID,clustValue=tsneCluster,topNVal = 3))
+
+vNoiseClusterNames <- veryNoiseyDocuments%>%
+  group_by(tsneClusterNames) %>%
+  summarise(medX = median(comp1),
+            medY = median(comp2)) %>%
+  filter(tsneClusterNames !="Noise")
+  
+#note - isol-strain-genom is a weird and expansize cluster, that is worth removing.
+veryNoiseyDocuments %>%
+  ggplot(aes(x=comp1,y=comp2,col=tsneClusterNames)) +
+  geom_point(alpha=0.2)+
+  theme_bw()+
+  #stat_ellipse(aes(group=tsneClusterNames),col="black")+
+  #geom_text(data=vNoiseClusterNames,aes(x=medX,y=medY,label=tsneClusterNames),col="black",size=3)+
+  scale_y_continuous(limits=c(min(tsneCord$comp2),max(tsneCord$comp2)))+
+  scale_x_continuous(limits=c(min(tsneCord$comp1),max(tsneCord$comp1)))+
+  theme(legend.position="None")
+
+```
+Again, these documents don't have smaller groups that are particularily intersting.  
+
+
+## Bigram clustering 
+
+I will now recruit the bigram dataset to help me identify cross-cutting topics between these datasets.At a high level, and using only single terms, the data clustered primarily by disease. But, I know there are cross cutting topics between diseases that should exist, for example, drug resistance, or outbreaks. Those cross-cutting topics are likely burried beneath the disease signal, so I will now try to pull them out using the bigram analysis. I am going to use the clusters from the single term analysis and their co-ordinates to conduct the bigram analysis.
+
+The bigram analysis is particularily useful so that I can figure out what's going on and how bigrams may be related. This analysis could be done with the single term analysis, but I found that to be messier and more difficult to understand the results, whereas using bigrams was much more useful.
+
+```{r bigramClustering, message=T,warning=T}
+bigram_df<-readRDS(file="data/genEpiData_initialQuery2_BIGRAM_tidyData.RDS")
+
+storedf<-bigram_df
+bigram_df<-left_join(tsneCord,bigram_df)
+
+#remove any bigrams that occur in fewer than 10 articles in a cluster
+removeBigram <- bigram_df %>%
+  ungroup() %>%
+  group_by(bigram,tsneClusterNames) %>%
+  count() %>%
+  filter(nn< 10)
+
+bigram_df <- bigram_df %>% anti_join(removeBigram)
+
+#count how often a bigram occurs within each group (each paper only gives 1)
+bigramDist<-c()
+  
+for(clusterName in unique(bigram_df$tsneClusterNames)){
+  numPapers<-bigram_df %>%
+    ungroup() %>%
+    filter(tsneClusterNames == clusterName) %>%
+    select(PMID)%>%
+    unique() %>%
+    count()
+    
+  tmp<-bigram_df %>%
+    ungroup() %>%
+    filter(tsneClusterNames == clusterName) %>%
+    select(bigram,PMID) %>%
+    distinct() %>%
+    group_by(bigram)%>%
+    count() %>%
+    mutate(freq = n/numPapers$n)
+  
+  tmp$tsneClusterNames<-rep(clusterName,nrow(tmp))
+  bigramDist<-rbind(bigramDist,tmp)
+}
+
+bigramDistFilt<-bigramDist %>%
+  filter(freq > .1) 
+
+
+#nclust
+nClust<-bigram_df$tsneClusterNames %>% unique() %>% length()
+
+#finally, tabulate which bigram occur the most frequently across clusters
+tmp<-bigramDistFilt %>%
+  select(bigram,tsneClusterNames) %>%
+  distinct() %>%
+  group_by(bigram) %>%
+  count() %>%
+  mutate(freq = n / nClust)
+
+write.csv(tmp,file="data/bigramCrossCluster_2.csv")
+
+```
+
+I have manually annotated those terms to cluster them into higher level categories. I will now explore the bigram terms, how I've clustered manually annotated them, and what I was expecting to see. Currently, each bigram has only *ONE* annotation.
+
+```{r showManualBigramCluster, message=F,warning=F}
+
+manAnnot<-read.csv(file="data/bigramCrossCluster_2_manualAnnot.csv",header=T)
+manAnnot$Annotate<-trimws(manAnnot$Annotate)
+
+#first, just show how many bigrams I've assigned to some annotation
+manAnnot %>%
+  group_by(Annotate) %>%
+  count() %>%
+  ggplot(aes(y=nn,x=reorder(Annotate,-nn))) +
+  geom_bar(stat="identity")+
+  theme_bw()+
+  geom_text(aes(label=nn),nudge_y=3,col="red")+
+  xlab("Manually annotate categories")+
+  ylab("Total number of bigrams")+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
+```
+The specific decisions behind each of the manually annotations are also noted in the CSV file for the manual annotations. I need to now make some decisions about what I keep, what I nest under some level (if at all), and whether I should go back and consider assignment bigram to multiple tags. 
+
+To begin, the most common tag is the "not-useful" tag. I've often classified a term as "not-useful" (for the purposes of my analysis) if it is too general, ("genom_sequenc"), a method ("chain_reaction", "confiden_intrv","electrophoresi_pfge"), or if it was just english writing ("analysi_reveal"). I do not include the "not-useful" bigrams in further analysis.
+
+The next most common category is "pathogen", these are commonly occuring bigrams that basically describe a bug. For example "dengu_vir", which matches the cluster names from the single term analysis. I consider the bigrams pathogen_x, or x_pathogen,  to belong to the pathogen annotation if x = "vir","isol","virus" or if x is the species name (i.e "staph aureus"). If x = "strain", the annotation is currently "characterisation", however this might also be a good case for allowing a bigram to belong to multiple annotations. Some pathogens found in the bigram analysis where not picked up by the single term clusterings, for example, there is no "klebsiella_pneumonia" cluster, but there is an "influenza" cluster. In a moment I'll show how many "new" pathogens are found by the bigram analysis, and to which clusters they belong. But lastly, and most importantly, the "pathogen"" annotation isn't really a cross-cutting topic, it just happens to show up. I'd like to make sure that I study the visualization across pathogens, which include capturing some of the pathogens that don't form their own clusters.
+
+```{r pathogenAnnotation, message=F,warning=F}
+
+pathAnnot<-manAnnot %>%
+  filter(Annotate == "pathogen") %>%
+  select(bigram,Annotate)
+
+pathCluster<-bigram_df %>%
+  inner_join(pathAnnot)
+
+sortOrder<-pathCluster %>%
+  ungroup() %>%
+  select(bigram,tsneClusterNames) %>%
+  distinct() %>%
+  group_by(bigram)%>%
+  count() %>%
+  arrange(-n)
+
+pathClusterCount<- pathCluster %>%
+  ungroup()%>%
+  select(bigram,tsneClusterNames) %>%
+  group_by(bigram,tsneClusterNames)%>%
+  count()
+
+pathClusterCount$bigram <- factor(pathClusterCount$bigram,levels=sortOrder$bigram)
+
+ggplot(pathClusterCount, aes(x=tsneClusterNames,y=bigram)) +
+  geom_tile(aes(fill=n),colour="white")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle=90,hjust=1,vjust=0.5))
+```
+It's clear that a lot of interesting stuff is in the "Noise" category, where some pathogen really just didn't get clustered. It's possible to show where everything ends up, either just on the outside of existing clusters or within them. It is also evidence that pathogens cross-cut a number of groups in the middle that have nothing really to do with pathogens, but are more about topics. For example, the E.coli pathogen bigram is predominately fround in the "coli-strain" cluster, but occrus across a number of pther clsuters (mlva-isol, resist-isol) ect. 
+
+```{r pathogenAnnotation2, message=F,warning=F}
+bigramNames <- pathCluster %>%
+  group_by(bigram) %>%
+  summarise(medX = median(comp1),
+            medY = median(comp2))
+
+tsneCord %>%
+  ungroup()%>%
+  mutate(isPathBigram = ifelse(PMID %in% unique(pathCluster$PMID),"pathogen","not-pathogen")) %>%
+  mutate(isNoise = ifelse(tsneClusterNames == "Noise","Noise","Cluster")) %>%
+  ggplot(aes(x=comp1,y=comp2,group=tsneClusterNames)) +
+  geom_point(aes(col = isPathBigram,alpha=isPathBigram))+
+  scale_alpha_manual(values=c(0.1,0.7))+
+  scale_colour_manual(values=c("grey","blue"))+
+  stat_ellipse(aes(linetype=isNoise),col="darkgrey")+
+  #geom_text_repel(data=bigramNames,aes(x=medX,y=medY,label=bigram),col="black",size=3)+
+  theme_bw()
+```
+
+So what is clear is that clusters around the outside (away from the middle), are all disease topics, whereas the stuff in the middle doesn't really have anything to do with pathogens, I am not yet sure what's in those clusters in the center, but I'll figure it out as I move through the annotations. It seems that many articles classified as noise might just be on the out reaches of known clusters. It seems that some clusters could even be broken up some more. For example isol_resist seems to actually contain klebsilla and psuedemonas data. E. coli seem to be all over the place, but largely relegated to noise and same with heliobacter_pylori , those may require a little bit more tweaking.
+
+One other neat thing, it seems that the data also seperate into bacteria (toward the right of the figure) and viruses (toward the left of the figure).
+
+On a final note, there are certainly some bugs here that aren't represented and I'd like to know a little bit more of why. Where is measles for example, or where is ebola? Where are any of the sexually transmitted diseases. What's possible is that the articles that dominate genomic epidemiology for infectious diseases are predominately about the major pathogens that are easily visible in the clustering analysis. But measles papers are more of a "public health" and less of "genomics" area. Since I want to retrieve genomics articles, this could be fine, but I want to see if that is actually the case. To do so, I'll explore where certain pathogens I expect to find exist, in this data set, and if my hypothesis is correct, I would tend to find these bugs in that "centre" group, that is current devoid of pathogen bigrams.
+
+```{r missingPathogens, message=F, warning=F,echo=FALSE}
+pathogens<-c("measles","ebola","zika","syphilis", "chlamydia","ghonorrhea","legionella","malaria")
+pathogens<-wordStem(pathogens)
+
+bigram_df %>%
+  filter(grepl(paste0(pathogens,collapse = "|"),bigram))
+  #filter(grepl("tubercul|influenz",bigram)) %>% View()
+
+```
+
+So what I think is happening here is that the methods or even cross-cutting topics signal is greater than the pathogen signal. That is, "pcr","virus sequence" etc have much stronger signal (because there are more documents) compared to "ebola virus" which has fewer documents, so everything kinda gets lumped into a free for all in the middle. It makes some sense, because viruses like Ebola or Zika only because priorities for investigation as these outbreaks because to take off in 2014 - 2017. By comparison, genomic analysis of TB, HIV, and influenza have a much longer history. 
+
+It could be possible to find a tag using "_viru", "_isol", or "_strain" (which came up a lot as patterns in the more prominent pathogen group) to see what I pull up from the "none-pathogen" clusters.
+
+```{r missingPathogens2, message=F,warning=F,echo=FALSE}
+pathogenPatterns <- c("_viru","viru_","_isol","_virus")
+
+bigram_df %>% 
+  filter(grepl(paste0(pathogenPatterns,collapse = "|"),bigram)) %>% 
+  group_by(bigram,tsneClusterNames) %>% 
+  #group_by(bigram) %>% 
+  count() %>% 
+  arrange(tsneClusterNames)
+```
+
+This is still a bit too general, so I will bring in a list of known communicable diseases that effect humans, to find where they are in the data set, and if they are present, what bigram prefixes or suffixes are common.
+
+```{r missingPathogens3, message=F,warning=F,echo=FALSE}
+pathogenList<-read.csv(file="data/disease_and_pathogens.csv",header=T)
+
+pathogenList<-pathogenList %>%
+  mutate(pathogen = strsplit(as.character(Source.of.Disease),";")) %>%
+  tidyr::unnest(pathogen) %>% 
+  mutate(pathogen = tolower(trimws(pathogen))) %>% 
+  unnest_tokens(bigram, pathogen,token = "ngrams",n=2) %>% 
+  separate(bigram, c("word1", "word2"), sep = " ") %>%
+  mutate(word1 = wordStem(word1)) %>%
+  mutate(word2 = wordStem(word2)) %>%
+  unite(bigram,word1,word2)
+
+#this is from the list
+pathogenDf <- inner_join(bigram_df,pathogenList)
+
+#now let's also add this to stuff I've already found
+foundPathogenDf <- inner_join(bigram_df,filter(pathAnnot, Annotate == "pathogen"))
+
+#now put them together (represents a total of 9,551 articles, of 15,315  that have some pathogen term)
+pathogenDf<-full_join(pathogenDf[,1:6],foundPathogenDf[,1:6])
+
+pathogenDf$PMID %>% unique() %>% length()
+
+#now let's take a look how those bugs are distributed
+pathogenDf %>%
+  group_by(bigram) %>%
+  count()
+
+```
+
+
+So, browsing these labels, what I can tell is that there are other pathogens, they're just not very common human pathogens or they're not human pathogens at all, "canine picovirus" for example, or they are review articles about certain families of viruses. So, they're not random articles, there are just very few articles about those topics such that they don't form a specific cluster, and they're not very very relevant human pathogens because they are absent from my list like Ebola and Zika which still don't have as many articles relative to TB, but that are of more contemporary interest.
+
+
+
+The other label that doesn't quite fit into the area of cross-cutting topics is "disease", which could refelect a specific pathogen or could refelect a condition that does cross-cut pathogen groups (for example "respiratory infections", are caused by a much of different pathogens). I marked pathogens and disease differently, but now I'll make an assessment if that was the right choice. 
+
+```{r diseaseInvestigat, message=F,warning=F}
+
+diseaseAnnot<-manAnnot %>%
+  filter(Annotate == "disease") %>%
+  select(bigram,Annotate)
+
+diseaseCluster<-bigram_df %>%
+  inner_join(diseaseAnnot)
+
+diseaseCluster %>%
+  ungroup()%>%
+  select(bigram,tsneClusterNames) %>%
+  group_by(bigram,tsneClusterNames)%>%
+  count() %>%
+  ggplot(aes(x=tsneClusterNames,y=bigram)) +
+  geom_tile(aes(fill=n),colour="white")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle=90,hjust=1,vjust=0.5))
+```
+
+Diseases are rather similar to pathogens, I might not want to keep this annotation because "pathogens" seems to be sufficent. 
+
+The rest of the annotations are all cross-cutting topics, and it would be useful to see how they are distributed across the different groups, and particularily how they're distributed within that middle group. 
+
+```{r crossCuttingTopics, message=F, warning=F}
+allAnnot<-manAnnot %>%
+  filter(!(Annotate %in% c("disease","pathogen"))) %>%
+  select(bigram,Annotate)
+
+allAnnotCluster<-bigram_df %>%
+  inner_join(allAnnot)
+
+sortOrder<-allAnnotCluster %>%
+  ungroup() %>%
+  select(Annotate,tsneClusterNames) %>%
+  distinct() %>%
+  group_by(Annotate)%>%
+  count() %>%
+  arrange(-n)
+
+
+allAnnotCluster %>%
+  ungroup()%>%
+  select(Annotate,tsneClusterNames) %>%
+  group_by(Annotate,tsneClusterNames)%>%
+  count() %>%
+  ungroup() %>%
+  mutate(Annotate= factor(Annotate,levels = as.character(sortOrder$Annotate))) %>%
+  ggplot(aes(x=tsneClusterNames,y=Annotate)) +
+  geom_tile(aes(fill=n),colour="white")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle=90,hjust=1,vjust=0.5))
+```
+
+Looking at the cross-cutting topics, a few things stand out. The "not-useful", annotation is found most frequently in the "Noise" cluster, but occurs across all the others as well.  Drug resistance bigram occur primarily in the pathogen clusters, as well as "strain-isol" and "mrsa-isol" clusters. Vaccine bigrams are not present in the influenza clusters, which is a bit surprising, but the noisey document analysis suggest that this is because they may for their own clusters outside of the more general inflenza group. 
+
+Now that I have a sense from this analysis that pathogens should drive the analysis, it would be good to find cross-cutting topics more directly linked to pathogen terms. For exaple "ebola outbreak", "influenza_outbreak","tuberculosis outbreak", making "outbreak" a useful cross-cutting topic. This might be much more effective then just looking for terms the signify resistance, for example "hospital outbreak", "community outbreak", which are concepts that could occur within pathogens clusters. So, I'll try that now and see what I get
+
+### Bigrams by pathogens
+
+I won't use all of the pathogens - I am going to use the documents from the tsne clusters with pathogen annotations (already evident in the analysis) and also add some additional items that are not in pathogen clusters, but are interesting from the previous pathogen analysis (like zika, ebola, etc.).
+
+
+```{r finalPathogenDocuments, message=F, warning=F}
+#how many articles contain some term linked to a pathogen bigram?
+#40 is abritrary, although I prefer cluster sizes of 50, 40 got zika in there, and that was my subjective bench mark
+pathogensFinal<-pathogenDf %>% ungroup() %>% group_by(bigram) %>% count() %>% filter(n > 40)
+
+#make some manual annotations
+#write.csv(file="data/pathogensListFinal.csv",pathogensFinal)
+
+#now bring that manual list back in, 
+pathogensFinal<-read.csv(file="data/pathogensListFinal_manualAnnot.csv",header=T)
+
+#I've also added metagenomics, microbiome, or microbiota since that's an area of work too.
+metaGen<-c("microbiome","metagenomics","microbiota")
+metaGen<-wordStem(metaGen)
+
+metaGenomicTerms<-bigram_df %>% filter(grepl(paste0(metaGen,collapse="|"),bigram)) %>% group_by(bigram) %>% count()
+metaGenomicTerms$Pathogen<-rep("Microbiota",nrow(metaGenomicTerms))
+
+pathogensFinal<-full_join(metaGenomicTerms[,c("bigram","Pathogen")],pathogensFinal[,c("bigram","Pathogen")])
+
+#noted somethings in pathogens final to clean up
+pathogensFinal[pathogensFinal$Pathogen=="Helicobact pylori",]$Pathogen<-"Helicobacter pylori"
+pathogensFinal<-filter(pathogensFinal,Pathogen !="")
+
+#bigram_path_df[bigram_path_df$Pathogen=="Helicobact pylori",]$Pathogen<-"Helicobacter pylori"
+
+#now let's finall get all the articles that have these bigram for bugs of interest
+favBugsArticles<-inner_join(pathogensFinal[,c("bigram","Pathogen")],bigram_df) %>% 
+  ungroup() %>%
+  select(Pathogen,PMID) %>%
+  distinct()
+
+#now let's combiene this with tsneCord, let's see what I am looking at.
+
+tsneCordPathogens<-left_join(tsneCord,favBugsArticles)
+tsneCordPathogens$Pathogen[is.na(tsneCordPathogens$Pathogen)]<-"Ignore"
+
+#now let's show where it is
+pathogenClusters <- tsneCordPathogens %>%
+  group_by(Pathogen) %>%
+  filter(Pathogen != "Ignore") %>%
+  summarise(medX = median(comp1),
+            medY = median(comp2))
+
+tsneCordPathogens %>%
+  filter(Pathogen!="Ignore") %>%
+  mutate(isNoise = ifelse(tsneClusterNames %in% c("Noise","veryNoisey"),
+                          ifelse(tsneClusterNames == "Noise","Unclustered","Never Clustered")
+                          ,"Clustered"))%>%
+  ggplot(aes(x=comp1,y=comp2,group=tsneClusterNames)) +
+  geom_point(aes(col = Pathogen),alpha=0.2)+
+  stat_ellipse(aes(alpha=isNoise))+
+  labs(x="tsneComp1",
+       y="tsneComp2")+
+  scale_alpha_manual(values=c(0.5,0))+
+  geom_label_repel(data=pathogenClusters,aes(x=medX,y=medY,label=Pathogen,group=Pathogen),
+                   size=3,min.segment.length = unit(0.1,"lines"))+
+  theme_bw()+
+  theme(legend.position="none")
+
+
+
+
+```
+
+
+```{r finalPathogenDocuments_PaperVersion,echo=FALSE, message=F, warning=F}
+
+#Colour the stuff on the outside, then make small multiple plot for stuff on the side
+outsideStuff<-c("Escherichia coli","Acinetobact baumannii","Dengue virus","Haemophilus Influenza",
+                "Hepatitis A","Hepatitis B","Hepatitis C","Hepatitis E","Heptatis - General",
+                "Human Immunodeficy Virus","Human Papillomavirus","Human rotavirus",
+                "Klebsiella pneumonia","MERS coronavirus","Mycobacterium tuberculosis",
+                "Salmonella Enterica","Salmonella typhimurium","SARS Coronavirus","Staphylococcus aureus",
+                "Vibrio cholerae" )
+
+tsneCordPathogens %>%
+  filter(Pathogen!="Ignore") %>%
+  mutate(isNoise = ifelse(tsneClusterNames %in% c("Noise","veryNoisey"),
+                          ifelse(tsneClusterNames == "Noise","Unclustered","Never Clustered")
+                          ,"Clustered"))%>%
+  mutate(outsideGrp = ifelse(Pathogen %in% outsideStuff,"Yes","No"))%>%
+  ggplot(aes(x=comp1,y=comp2,group=tsneClusterNames)) +
+  geom_point(aes(col = outsideGrp),alpha=0.2)+
+  stat_ellipse(aes(alpha=isNoise))+
+  labs(x="tsneComp1",
+       y="tsneComp2")+
+  scale_alpha_manual(values=c(0.5,0))+
+  scale_colour_manual(values=c("darkgray","blue"))+
+  geom_label_repel(data=pathogenClusters,aes(x=medX,y=medY,label=Pathogen,group=Pathogen),
+                   size=3,min.segment.length = unit(0.1,"lines"))+
+  theme_bw()+
+  theme(legend.position="none",
+        #legend.title = element_blank(),
+        panel.grid.major= element_blank(),panel.grid.minor = element_blank(),
+        axis.text = element_blank(),axis.title = element_blank(),
+        panel.border = element_blank(),axis.ticks = element_blank())
+
+ggsave("pathogenValidationAll.pdf")
+
+
+#small multiples inset
+tmp<-tsneCordPathogens %>%
+  filter(Pathogen!="Ignore") %>%
+  mutate(isNoise = ifelse(tsneClusterNames %in% c("Noise","veryNoisey"),
+                          ifelse(tsneClusterNames == "Noise","Unclustered","Never Clustered")
+                          ,"Clustered"))%>%
+  mutate(outsideGrp = ifelse(Pathogen %in% outsideStuff,"Yes","No"))
+
+  
+tmp %>% 
+  select(comp1,comp2,Pathogen)%>%
+  ggplot(aes(x=comp1,y=comp2,group=Pathogen)) +
+  geom_point(alpha=0.2,size=2)+
+  stat_ellipse(data=select(tmp,-Pathogen),aes(alpha=isNoise,group=tsneClusterNames))+
+  facet_wrap(~Pathogen,drop=TRUE,nrow=5)+
+  scale_alpha_manual(values=c(0.5,0))+
+  theme_bw()+
+  theme(legend.position="none",
+        panel.grid.major= element_blank(),panel.grid.minor = element_blank(),
+        axis.text = element_blank(),axis.title = element_blank(),
+        panel.border = element_blank(),axis.ticks = element_blank(),
+        strip.text = element_text(size=8))
+  
+ggsave(file="pathogenSmallMultiplesAll.pdf",height=10,width=15)
+```
+
+```{r finalPathogenDocuments_PaperVersion2,echo=FALSE, message=F, warning=F}
+tmp %>%
+  filter(outsideGrp == "No")%>%
+  select(comp1,comp2,Pathogen)%>%
+  ggplot(aes(x=comp1,y=comp2,group=Pathogen)) +
+  geom_point(alpha=0.2,size=2)+
+  stat_ellipse(data=select(tmp,-Pathogen),aes(alpha=isNoise,group=tsneClusterNames))+
+  facet_wrap(~Pathogen,drop=TRUE,nrow=5)+
+  scale_alpha_manual(values=c(0.5,0))+
+  theme_bw()+
+  theme(legend.position="none",
+        panel.grid.major= element_blank(),panel.grid.minor = element_blank(),
+        axis.text = element_blank(),axis.title = element_blank(),
+        panel.border = element_blank(),axis.ticks = element_blank(),
+        strip.text = element_text(size=10))
+  
+ggsave(file="pathogenSmallMultiplesSubset.pdf",height=7,width=7)
+```
+
+From this I have 6,350 articles that represent specific pathogens that both a very widely studied (for tsne clusters) or are less studied but still interesting (low signal, high interest; i.e ebola virus). It's clear from the above figure that disease in the middle clusters are quite spread out (at least according to the original clustering). We might get a cleaner image by re-clustering using tsne, but that's not very important for my next step.
+
+So, now let's try to big cross-cutting topics between these bugs. Some of these might be similar to previous manual annotations created by considering the whole data set, but also annotaiton of topics linked to specific terms (i.e. "ebola outbreak", instead of "hospital outbreak").
+
+```{r finalPathogenDocuments2, message=F,warning=F}
+
+bigram_path_df<-inner_join(bigram_df,favBugsArticles[,c("PMID","Pathogen")]) 
+
+#other topics
+crossTopic<-bigram_path_df%>%
+  filter(Pathogen !="Ignore") %>%
+  group_by(bigram,Pathogen)%>%
+  count() %>% 
+  filter(nn > 2) %>%
+  ungroup() %>%
+  group_by(bigram) %>%
+  count() %>%
+  mutate(topic = bigram) %>%
+  separate(topic,c("word1","word2"),"_")
+
+
+#next, remove terms that only occur in one cluster. Now that I know what the pathogens are, I don't need the pathogen 
+
+write.csv(file="data/topicsByPathogen.csv",crossTopic,quote=F)
+```
+
+When I look at the cross-cutting topics, I can see the common themes, much more clearly when considering pathogen documents instead of just the tsne clusters as I had considered previously. 
+
+I'll now load the manual annotations to see how bigram and annotations play out across the different clusters, and finally, how many documents contain some useful annotations (some bigrams are tagged as ignore). The annotations were subjectively selected, others may find items I've tagged as "ignore" to be very interesting. But generally, items that were labelled as "ignore" had to do with common phrasing ("analysis revealed"), generic molecular biology mechanisms (like reporductive mechanisms; note, mechanisms specific to drug resistance (plasmids, resistance genes) were retained and tagged as mBio), generic immune responses (hla type, innate immunity; these don't have much to do with epidemiology even though they are relevant to the disease); regions (Africa, China, USA ect.); and re-iterations of already identified pathogens. Finally some terms were just very broad, and other more specific terms were sometimes better to use. 
+*note to self: use the bigram dataset that hasn't been filtered for different levels of noise because there are useful articles floating around*
+```{r whyAnnotationsManual, message=F,warning=F}
+manAnnot<-read.csv(file="data/topicsByPathogen_manuallAnnot.csv",header=T)
+
+
+#Now, since I have the bigrams for all the useful bugs filtered out from the noisey documents, I will include every single document (with all levels of noise) that map to a document 
+
+#now get total number of bugs
+totalBugs<-pathogensFinal %>% ungroup() %>% filter(Pathogen != "Ignore") %>% select(Pathogen) %>% unique() %>% count()
+totalBugs<-totalBugs$n
+
+#first, the most common bigrams and how many pathogens they are present in
+manAnnot %>%
+  filter(n>1)%>%
+  group_by(n) %>%
+  count() %>% 
+  ggplot(aes(x=n,y=nn))+
+  geom_bar(stat="identity")+
+  geom_text(aes(label=nn),nudge_y=5,col="red")+
+  xlab("Total # of pathogens bigram occurs in")+
+  ggtitle("Bigrams across pathogens")+
+  scale_x_continuous(breaks=2:totalBugs)+
+  theme_bw()
+```
+
+The majority of terms occur in just one pathogen (~1,300 bigrams), while some occur in all pathogens ( "genome sequence"). Bigrams are also specific terms (espeically those that just occur in one pathogen) that can describe the same concept. For example "Beta lactamase" is associated with drug resistance, but might be referenced in different ways (abbreviation for example). So I manually annotated each of these bigrams to concepts that they describe. 
+
+```{r whyAnnotationsManual2,message=F,warning=F}
+manAnnot %>%
+  group_by(why) %>%
+  count() %>% 
+  filter(why !="ignore") %>%
+  ggplot(aes(x=reorder(why,-nn),y=nn))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  geom_text(aes(label=nn),nudge_y=5,col="red")+
+  ggtitle("Annotations for Bigrams")+
+  xlab("Annotation terms")+
+  ylab("Total number of bigrams assigned to annotation term")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5,hjust=1))
+```
+To some bigrams I have given more than one annotation since it could represent multiple concepts. In my mind there is a hiearchy here, but I'll break them up.
+
+```{r whyAnnotationsManual3,message=F,warning=F}
+manAnnot %>%
+  mutate(why = strsplit(as.character(why),split=";")) %>%
+  unnest(why)%>% 
+  group_by(why) %>%
+  count() %>% 
+  filter(why !="ignore") %>%
+  ggplot(aes(x=reorder(why,-nn),y=nn))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  geom_text(aes(label=nn),nudge_y=5,col="red")+
+  ggtitle("Bigrams per concept")+
+  xlab("Concept terms")+
+  ylab("Total number of bigrams assigned to annotation term")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5,hjust=1))
+```
+So most annotations (concepts) have a number of bigrams associated with that concept, with only a few (community, international, outcome, and reservoir) have only one associated bigram. The annotations here were much easier to come up than my initial attempt that used just the clusters and not the pathogen (again, even though there is an overlap between clusters and pathogens).
+
+Finally, I will now show how these concepts occuring accross the different pathogens.
+
+```{r whyAnnotationsByPathogen, message=F,warning=F}
+bigram_path_df%>%
+  filter(Pathogen !="Ignore") %>%
+  inner_join(manAnnot[,c("bigram","why")]) %>% 
+  filter(why !="ignore") %>% 
+  ungroup() %>% 
+  mutate(why = strsplit(as.character(why),split=";")) %>%
+  unnest(why)%>% 
+  group_by(why,Pathogen)%>%
+  count() %>%
+  ungroup() %>%
+  group_by(why) %>%
+  count() %>% 
+  ggplot(aes(x=reorder(why,-n),y=n))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  geom_text(aes(label=n),nudge_y=1,col="red")+
+  xlab("Concept")+
+  ylab("# of Pathogens with this concept")+
+  ggtitle("Concepts by Pathgens")+
+  theme(axis.text.x = element_text(angle=90,vjust=0.5,hjust=1))
+```
+So these concepts have much more coverage than individual bigram terms. Lasty, it is possible to see how many articles, per concept and pathogen exist. Up to this point in the analysis, I've removed very noisey articles that really didn't cluster with others. I will now bring those articles back in (except the very noisey documents), and if they contain bigrams that relate to what I've found, then they're fair game.
+
+```{r whyAnnotationsByPathogen2, message=F,warning=F}
+
+dat<-bigram_path_df%>%
+  filter(Pathogen !="Ignore") %>%
+  inner_join(manAnnot[,c("bigram","why")]) %>% 
+  filter(why !="ignore") %>% 
+  ungroup() %>%
+  mutate(why = strsplit(as.character(why),split=";")) %>%
+  unnest(why)
+
+saveRDS(file="data/concepts_bigrams_articles_Final.RDS",dat)
+
+dat %>%
+  select(PMID,why,Pathogen) %>%
+  group_by(why,Pathogen) %>%
+  distinct() %>% 
+  count()%>%
+  filter(n>1) %>% #remove concepts that occurs only in one article (very little signal or support)
+  ggplot(aes(x = why,y=Pathogen))+ #not perfect, but good enough
+  geom_tile(aes(fill=n),colour="white")+
+  theme_bw()+
+  xlab("Concept")+
+  theme(axis.text.x = element_text(angle=90,hjust=1,vjust=0.5))
+```
+
+From the above figure, sthe presence and absence of some concepts make sense. For example, the "cancer" concept is found in "H. plyori, HCV,HBV, and Hepatitis-General,and HPV" which make sense as these pathogens are more directly invovled in tumour aetiology. The terms, "Phylogeny outbreak,genome,characterization" and drug resistance occur in a lot of pathogens. There are some interesting concepts represented in some pathogens. For example "transmission" in microbiota, which seems odd, but looking digging into it a bit seems to be legitmate because the papers concerns how microbiota concern susceptibility for transmission for other pathogens. Which is interesting, but is different from say the chain of transmission with other pathogens. So there's still a fair bit of nuance. There's also some articles that will be very methods heavy (like those flagged as characterization and mBio), which really doesn't have much to do with genomic epidemiology, but more about laboratory techniques.  Those don't have much to do with visualization, but may contain some interesting of useful visualizations.
+
+Finally, I want to know, how many "concepts"" there are per article. Would some articles only have one concept, would other articles have more than one. 
+
+```{r conceptsByArticles,message=F,warning=F}
+
+dat %>%
+  select(PMID, why) %>%
+  distinct() %>% #some articles may contain bigrams that map to the same concept multiple times
+  group_by(PMID) %>%
+  count() %>% 
+  ggplot(aes(x=n))+
+  geom_histogram(binwidth =1,colour="white")+
+  theme_bw()
+```
+The majority of articles are linked to only one to three interesting concepts. The articles that have more can be interesting, but don't always have full text links. We can also split this up by pathogen to see which pathogen has papers with a single concept.
+
+
+
+```{r conceptsByArticles2,message=F,warning=F}
+dat %>%
+  select(PMID, why,Pathogen) %>%
+  distinct() %>% #some articles may contain bigrams that map to the same concept multiple times
+  group_by(PMID,Pathogen) %>%
+  count() %>%
+  ggplot(aes(x=n))+
+  geom_histogram(binwidth =1,colour="white")+
+  facet_wrap(~Pathogen,scales="free_y")+
+  theme_bw()
+```
+Not very surprisingly, the pathogens that would pretty much form their own clusters on TSNE analysis also have a lot of concepts represented among them, and this is really because there's been enough published about them over very many years. So what I will do is keep that pathogens with a lot of concepts as their own clusters, and everything else, I will place into an "other" category.
+
+```{r conceptsByArticles3, message=F,warning=F}
+
+total_docs <- dat %>% 
+  select(PMID, Pathogen) %>%
+  distinct() %>%
+  group_by(Pathogen)%>%
+  summarize(total = n()) %>% 
+  filter(total>100) %>% 
+  select(Pathogen)
+
+# keepGroup<-dat %>%
+#   select(PMID, why,Pathogen) %>%
+#   distinct() %>% #some articles may contain bigrams that map to the same concept multiple times
+#   group_by(PMID,Pathogen) %>%
+#   summarise(nConcepts = n()) %>%
+#   ungroup()%>%
+#   group_by(Pathogen,nConcepts)%>%
+#   summarise(totalDocs = n()) %>% 
+#   inner_join(total_docs) %>% 
+#   ungroup() %>%
+#   mutate(freq = totalDocs/total) %>% 
+#   filter(nConcepts == 1) %>% 
+#   filter(freq<0.25) %>% #fewer than 25% of articles are linked to only one concept
+#   select(Pathogen)
+
+dat %>%
+  select(PMID, why,Pathogen) %>%
+  distinct() %>% #some articles may contain bigrams that map to the same concept multiple times
+  mutate(Pathogen = factor(ifelse(Pathogen %in% total_docs$Pathogen, Pathogen, "Other"),levels=c(total_docs$Pathogen,"Other"))) %>%
+  group_by(PMID,Pathogen) %>%
+  count() %>%
+  ggplot(aes(x=n))+
+  geom_histogram(binwidth =1,colour="white")+
+  facet_wrap(~Pathogen)+
+  theme_bw()
+```
+
+When I sample articles, I will try to sample concepts from across 18 groups, this will result in about 414 publications. If a paper that is sampled ends up not having a relevant visualization, then I will sample again (specifically for that pathogen and concept) until I get one that does.
+
+
+#Sampling documents
+Based upon the above analysis, I've concluded that it's easiest to treat the concepts as tags rather than as having some more innate hiearchical structure.
+
+My strategy to sample documents is to make sure every concept is covered per pathogen. In theory, if each paper had only one affiliated tag, I would need to sample 23 unique papers for 18 pathogens, resulting in a final dataset of 414 papers that for the following analysis of visualizations. Since papers tend to have more than one concept affiliated with them, the total number of papers will actually be quite a bit fewer. I personally am aiming for a few hundred documents so that I have a good diversity for analysis, and so, I might do redundant coverage of concepts with a pathogen depending upon how things shake out. Also, some pathogens just won't have a specific concept associated with it at all (like reservoir, which only occurs in 3 pathogens; this doens't mean only three pathogens have reservoirs, but that only three pathogens have those bigram terms associated with at and there is some signal in the data to pick it up)
+
+Following the initial sampling I will manually review each of the suggested documents to see if they contain a visualization that is relevant (for example some papers may just have pictures of gels). If there are no visualizations, or the visualizations are not relevant, I will resample documents (for a given pathogen) until I once again have coverage of all documents and relevant data visualizations. Also, if it seems like a document has a visualization I've already seen (I expect many phylogenetic trees without annotations (note, phylogenetic trees with differents kinds of annotations are interesting and count as different things)) I will also resample to try get some diversity. I will keep a record for the decisions that were made along the way. 
+
+
+## Sampling round 1
+```{r samplingDocuments, message=F,warning=F}
+set.seed(416)
+
+docStore<-c()
+
+#sort from pathogen with least papers to most, start with least papers.
+concepts<-dat %>%
+  dplyr::select(PMID,Pathogen,why)%>%
+  distinct()%>%
+  mutate(Pathogen = factor(ifelse(Pathogen %in% total_docs$Pathogen,Pathogen, "Other"),levels=c(total_docs$Pathogen,"Other"))) %>%
+  group_by(why) %>%
+  count() %>%
+  arrange(n)
+
+
+for(concept in concepts$why){
+  #select documents
+  docSample<-dat %>%
+    dplyr::select(PMID,why,Pathogen) %>%
+    mutate(Pathogen = factor(ifelse(Pathogen %in% total_docs$Pathogen,Pathogen, "Other"),levels=c(total_docs$Pathogen,"Other"))) %>%
+    distinct()%>%
+    filter(why == concept) %>% 
+    group_by(Pathogen)%>%
+    sample_n(1)
+  
+ 
+  docStore<-rbind(docStore,docSample)
+}
+
+genEpiData <- readRDS(file="data/genEpiData_initialQuery2.RDS")
+
+#276 documents
+genEpiData<-genEpiData %>%
+  filter(PMID %in% replacement$PMID)
+
+#for each PMID, I will summarize the concept tags that are within each documents
+genEpiData$concepts<-rep(NA,nrow(genEpiData))
+genEpiData$Pathogen<-rep(NA,nrow(genEpiData))
+genEpiData$replacementPMID<-rep(NA,nrow(genEpiData))
+
+conceptCoverage<-c()
+pathogenCoverage<-c()
+
+for(i in 1:nrow(genEpiData)){
+  PMIDval<-genEpiData[i,"PMID"]
+  
+  conceptTags<-filter(datStore,PMID == PMIDval) %>%
+    dplyr::select(why,Pathogen) %>%
+    distinct()
+  
+  conceptCoverage<-c(conceptCoverage,unique(conceptTags$why))
+  pathogenCoverage<-c(pathogenCoverage,unique(conceptTags$Pathogen))
+  
+  genEpiData[i,"concepts"]<-paste0(unique(conceptTags$why),collapse=";")
+  genEpiData[i,"Pathogen"]<-paste0(unique(conceptTags$Pathogen),collapse=";")
+}
+
+View(dplyr::select(genEpiData,-contains("meshTerms")))
+ 
+#write.csv(file="data/documentSample_v0.1.1csv",dplyr::select(genEpiData,-contains("meshTerms")),quote=T)
+
+#finally, the concept coverage by these 276 articles
+
+sort(table(conceptCoverage))
+
+sort(table(pathogenCoverage))
+```
+
+*Note to future self:*
+Version 1.0 of the sampling was me trying things out, if someone ran through this analysis, the might not get the documents in version 1.0.
+
+Verion 1.1 (the version used in analysis) was obtained when I ran through the entire analysis as is, not extra analysis or figuring things out. In theory, someone running through this analysis should end up with the same sampled documents (since I set a seed) as articles.
+
+
+**Review of Sampled Documents**
+
+I have now analyzed the 276 documents and classified them as Y (acceptable for further analysis), N (not acceptable for further analysis), or M (I've included it for now, but I was on the fence about it).
+
+```{r sampDocAnalysis2, warning=F,message=F}
+
+sampDoc<-read.csv(file="../data/documentSample_v0.1.1_CSV.csv",header=T,stringsAsFactors = F)
+
+#clean up any white space
+sampDoc$Include<-trimws(samp)
+
+table(sampDoc$Include)
+```
+So far, I have included only 107 documents, a success rate of ~40%, or only 32.6% for articles that were confidently included. The other articles have been excluded for various reasons that are indicated in the excel document.
+
+It's also possible to see inclusion by year:
+```{r sampDocAnalysis, warning=F,message=F}
+table(sampDoc$YearPub,sampDoc$Include..Y.N.)
+```
+Articles in 2010 and beyond were more likely to be included. For resampling efforts it might be more fruitful to sample later years, rather than sample publications from much earlier. 
+
+Finally, we can also see the concepts covered by the sampled documents
+```{r topicsCoveredByAlreadySampledDocuments, message=F,warning=F}
+#concept path covers the topics covered in the accepted document
+conceptpath<-sampDoc %>%
+  filter(Include == "Y") %>%
+  mutate(concepts = ifelse(revised.concepts=="",concepts,revised.concepts))%>% 
+  mutate(concepts = strsplit(as.character(concepts), ";")) %>%
+  tidyr::unnest() %>%
+  #fix a typo
+  mutate(concepts = ifelse(concepts == "surveillence","surveillance",trimws(concepts))) %>%
+  mutate(Pathogen = strsplit(as.character(Pathogen), ";")) %>%
+  tidyr::unnest() %>%
+  ungroup()%>%
+  group_by(Pathogen,concepts)%>%
+  count() %>%
+  ungroup()%>%
+  tidyr::complete(Pathogen, concepts, fill = list(n = 0))
+
+tmpOrderConcept<- conceptpath %>% ungroup() %>% group_by(concepts) %>% summarise(nn=sum(n)) %>% arrange(-nn)
+tmpOrderPathogen<- conceptpath %>% ungroup() %>% group_by(Pathogen) %>% summarise(nn=sum(n)) %>% arrange(-nn)
+
+conceptpath$concepts<-factor(conceptpath$concepts,levels=tmpOrderConcept$concepts)
+conceptpath$Pathogen<-factor(conceptpath$Pathogen,levels=tmpOrderPathogen$Pathogen)
+
+ggplot(data=conceptpath,aes(y=concepts,x=Pathogen))+
+  geom_tile(aes(fill=n),colour="white")+
+  scale_fill_gradient(low="#ffffff",high="#000000")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle=90,hjust=1,vjust=0.5))
+```
+
+## Sampling round 2
+The goal of resampling is to replace pathogens and concepts that we classified as N or M in the first round of reviews. Items were classified as N if they contained no data visualizations, or were off topic, or didn't really talk about humans (with some very few exceptions). The various reasons are listed in the excel document. Note that just lab images (pfge gels, microscopy images) were not considered to be data visualizations. Some papers had pfge gels + a phylogenetic tree for annotation, and that *was* considered to be a data visualization. 
+
+The sampling here will go as follows: two attempts will be made to resample each pathogen and concept combination, since most papers cover multiple topics priorty is given to a topic that isn't yet convered by that pathogen and afterwards, a topic that is not well covered in general. The first of the resampled papers that gets a Y is accepted (if the first of two is a good hit, then the second sample is discarded). 
+
+I noticed while going through the first batch of 276 papers that many older papers were harder to access or contained fewer data visualizations. So this next batch of samples will be limited papers published in 2011 and beyond. This should hopeful sample some papers that aren't just phylogenetic trees with annotating text. 
+
+```{r resampling, message=F,warning=F}
+set.seed(430)
+
+conceptsInitial<-conceptpath
+
+#remove documents already sampled
+idx2011<-filter(genEpiData,YearPub>=2011) %>% dplyr::select(PMID)
+datSub <- filter(dat, !(PMID %in% sampDoc$PMID)) %>% filter(PMID %in% idx2011$PMID)
+
+#replace a previous paper that was rejected (N)
+rejectedPMID<-filter(sampDoc, Include == "N") %>% dplyr::select(PMID)
+
+replacement = c()
+
+for(rejectedPaper in rejectedPMID$PMID){
+  tmp<-dat %>% filter(PMID == rejectedPaper) %>%
+    dplyr::select(Pathogen,why) %>% 
+    distinct()
+    
+    #when a single article covers many many pathogens,
+    #sample the pathogen with the least number of topics covered.
+    #this doesn't happen a lot, but some articles are about a lot of bugs
+    nPath<-length(unique(tmp$Pathogen))
+    
+    if(nPath > 1){
+      pathSamp <-  tmpOrderPathogen$Pathogen[max(which(tmpOrderPathogen$Pathogen %in% unique(tmp$Pathogen)))]
+    }else{
+      pathSamp <- unique(tmp$Pathogen)
+    }
+    
+    #for that pathogen, sort concepts according to coverage
+    topicOrder<-filter(conceptpath,Pathogen == pathSamp) %>%
+      arrange(n) %>%
+      ungroup() %>%
+      group_by(n)%>%
+      sample_frac(1)#this randomly orders items within the same count level (see rationale below)
+    
+    # some bugs that were sampled had *no* previous documents sampled (conceptpath
+    # contains sampled documents that were *not* rejected.). This can be the case for
+    # bugs like Zika and Ebola which are newer, and got in that "other" category. So
+    # pick any concept to sample
+    if(nrow(topicOrder)==0){
+      topicOrder<-data.frame(concepts =levels(conceptpath$concepts),
+                             n = rep(0,length(levels(conceptpath$concepts))))
+    }
+    
+    holding<- c() #keeping track of what's been sampled, again, only need two documents
+    
+    # sample the least sampled topics first, and work up the list
+    # randomly order topics withing the same count (see above)
+    # sometimes "holding" has a PMID stored which has not yet been pushed
+    # to replacement, this can cause some duplicated PMIDs, and I've decided
+    # that's fine, since the number of replacated IDs is few and there are
+    # "rare" concepts/pathogen combinations which may only end up with one article anyway
+    for(topic in topicOrder$concepts){
+      tmp2<- filter(datSub, Pathogen == pathSamp & why == topic)
+      
+      #try to sample as many unique articles as possible
+      if(!(is.null(replacement)) & nrow(tmp2)>1){
+        tmp2<-filter(tmp2,!(PMID %in% replacement$PMID))
+      }
+
+      if(nrow(tmp2)==0){
+        #move on to the next topic, there's nothing to see here
+        next;
+      }else if(nrow(tmp2)==1){
+        #if there's only one paper to pick from, select it then move on to the next topic
+        tmp2<-cbind(tmp2,rejectedPaper)
+        names(tmp2)<-c(names(tmp2)[1:(ncol(tmp2)-1)],"rejectedPMID")
+        holding<-rbind(holding,tmp2)
+      }else if(nrow(tmp2)>1){
+        if(is.null(nrow(holding))){
+           #if there are more than two papers to pick from, randomly sample 2
+            tmp2<-cbind(dplyr::sample_n(tmp2,2),rep(rejectedPaper,2))
+        }else if(nrow(holding)==1){
+          tmp2<-cbind(dplyr::sample_n(tmp2,1),rejectedPaper)
+        }
+       
+        names(tmp2)<-c(names(tmp2)[1:(ncol(tmp2)-1)],"rejectedPMID")
+        holding<-rbind(holding,tmp2)
+      }
+      
+      if(nrow(holding) == 2){
+        #update the replacement object
+        replacement<-rbind(replacement,holding)
+        
+        #update the concept count option - the lazy way
+        #note to self - I checked and this works woo!
+        #so next time a pathogen needs to replace paper we get undersampled topics!
+        for(i in 1:2){
+          pathSamp<-holding[i,"Pathogen"]
+          topic<-holding[i,"why"]
+          
+          conceptpath<-conceptpath %>%
+            ungroup()%>%
+            mutate(n=ifelse(Pathogen == pathSamp & concepts == topic, n + 1,n))
+        }
+        
+        holding<-c()
+        break;
+      }else{
+        next;
+      }
+    }
+}
+
+p1<-ggplot(data=conceptsInitial,aes(y=concepts,x=Pathogen))+
+  geom_tile(aes(fill=n),colour="white")+
+  scale_fill_gradient(low="#ffffff",high="#000000")+
+  theme_bw()+
+  theme(legend.position="none",axis.text.x = element_text(angle=90,hjust=1,vjust=0.5))
+
+p2<-ggplot(data=conceptpath,aes(y=concepts,x=Pathogen))+
+  geom_tile(aes(fill=n),colour="white")+
+  scale_fill_gradient(low="#ffffff",high="#000000")+
+  theme_bw()+
+  theme(legend.position="none",axis.text.x = element_text(angle=90,hjust=1,vjust=0.5))
+
+cowplot::plot_grid(p1,p2)
+```
+
+
+Below, highlight the areas where the sampling scheme tried to boost signal
+```{r plotContinued, message=F,warning=F}
+diffConcept<-conceptsInitial %>%
+  ungroup() %>%
+  mutate(newCounts = conceptpath$n) %>%
+  mutate(diff = newCounts - n)
+
+ggplot(data=diffConcept,aes(y=concepts,x=Pathogen))+
+  geom_tile(aes(fill=diff),colour="white")+
+  scale_fill_gradient(low="#ffffff",high="#000000")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle=90,hjust=1,vjust=0.5))
+```
+
+Ok, the total number of resampled documents matches what I expect (310).
+
+```{r absentcounts}
+replacement %>% 
+  ungroup()%>%
+  group_by(rejectedPMID) %>%
+  count() %>% 
+  filter(nn < 2) #no that's not it
+
+setdiff(rejectedPMID$PMID,replacement$rejectedPMID) #ok, six had something weird
+
+```
+
+```{r collectWithGenEpi, message=F,warning=F}
+genEpiData<-genEpiData %>%
+  filter(PMID %in% replacement$PMID)
+
+#for each PMID, I will summarize the concept tags that are within each document
+
+genEpiData$concepts<-rep(NA,nrow(genEpiData))
+genEpiData$Pathogen<-rep(NA,nrow(genEpiData))
+genEpiData$replacingPMID<-rep(NA,nrow(genEpiData))
+
+for(i in 1:nrow(genEpiData)){
+  PMIDval<-genEpiData[i,"PMID"]
+  
+  conceptTags<-filter(datSub,PMID == PMIDval) %>%
+    dplyr::select(why,Pathogen) %>%
+    distinct()
+  
+    replacementPMID<-filter(replacement,PMID == PMIDval)
+  
+  genEpiData[i,"concepts"]<-paste0(unique(conceptTags$why),collapse=";")
+  genEpiData[i,"Pathogen"]<-paste0(unique(conceptTags$Pathogen),collapse=";")
+  genEpiData[i,"replacingPMID"]<-paste0(unique(replacementPMID$rejectedPMID),collapse=";")
+}
+
+View(dplyr::select(genEpiData,-contains("meshTerms")))
+ 
+#write.csv(file="data/document_Resample_v0.1.0.csv",dplyr::select(genEpiData,-contains("meshTerms")),quote=T)
+
+```
+
