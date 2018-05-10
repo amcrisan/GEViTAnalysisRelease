@@ -113,7 +113,7 @@ Cleaning the dataset uses guidance from the tidytext online guide, it's very use
 
 ```{r tidyTextPrep, eval=FALSE, warning=FALSE, messages=FALSE}
 #loading the dataset as previous code was not actually run (takes too long)
-genEpiData<-readRDS(file="../data/genEpiData_initialQuery2.RDS")
+genEpiData<-readRDS(file="data/genEpiData_initialQuery2.RDS")
 
 #commonly used words in the english language
 data(stop_words)
@@ -158,7 +158,7 @@ wordToRemove<-genEpitext_df %>%
 genEpitext_df<-anti_join(genEpitext_df,wordToRemove,by="wordStemmed") #there are 1167 unique terms that meet this critiera
 
 #saving the tidytext dataset
-saveRDS(file="data/genEpiData_initialQuery2_tidyData.RDS",genEpitext_df)
+#saveRDS(file="data/genEpiData_initialQuery2_tidyData.RDS",genEpitext_df)
 ```
 
 ## Creating a bigram dataset
@@ -192,7 +192,7 @@ bigram_df<-bigram_df %>%
   ungroup() %>%
   bind_tf_idf(bigram, PMID, n)
 
-saveRDS(file="data/genEpiData_initialQuery2_BIGRAM_tidyData.RDS",bigram_df)
+#saveRDS(file="data/genEpiData_initialQuery2_BIGRAM_tidyData.RDS",bigram_df)
 
 ```
 
@@ -213,7 +213,7 @@ The document term frequency uses the tf_idf metric to assess teh distribution of
 ```{r dtmPrep, message = FALSE, warning=FALSE}
 
 #load data, since RMDnote does not run the earlier steps
-genEpitext_df<-readRDS(file="data/genEpiData_initialQuery2_tidyData.RDS")
+#genEpitext_df<-readRDS(file="data/genEpiData_initialQuery2_tidyData.RDS")
 
 #now create dtm
 dtm<-genEpitext_df %>%
@@ -229,7 +229,7 @@ colnames(dtm)<-colVals
 
 dtm[is.na(dtm)]<-0
 
-saveRDS(file="data/dtm_bigraminitialQuery2.RDS",dtm)
+#saveRDS(file="data/dtm_bigraminitialQuery2.RDS",dtm)
 ```
 
 ### tSNE
@@ -289,7 +289,7 @@ dfPts %>%
   scale_colour_manual(values=c("blue","red"))+
   theme(legend.position="None")
 
-ggsave(file="optimalParamSearch.pdf")
+#ggsave(file="optimalParamSearch.pdf")
 
 ```
 As the scaling factor exceeds 150, the data group into fewer clusters until everything appears to be noise. The sweet spot is a min pts value somewhere between 50 and 150, each with rather different number of clusters:
@@ -490,7 +490,7 @@ tsneCord %>%
   theme(legend.position="None")
 
 
-saveRDS(file="data/rtsne_perplexity_100_withClusters.RDS",tsneCord)
+#saveRDS(file="data/rtsne_perplexity_100_withClusters.RDS",tsneCord)
 ```
 
 ```{r tsneClsuterBreakdown_PaperVersion, eval=FALSE,echo=FALSE,message=F,warning=F}
@@ -754,7 +754,7 @@ tmp<-bigramDistFilt %>%
   count() %>%
   mutate(freq = n / nClust)
 
-write.csv(tmp,file="data/bigramCrossCluster_2.csv")
+#write.csv(tmp,file="data/bigramCrossCluster_2.csv")
 
 ```
 
@@ -1027,10 +1027,6 @@ tsneCordPathogens %>%
                    size=3,min.segment.length = unit(0.1,"lines"))+
   theme_bw()+
   theme(legend.position="none")
-
-
-
-
 ```
 
 
